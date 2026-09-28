@@ -99,6 +99,7 @@ function renderSessions(sessions) {
     <li class="row spread">
       <div class="grow">
         <div><b>${escapeHtml(s.title)}</b> <span class="pill">${s.code}</span>
+          ${s.role === 'cohost' ? '<span class="pill">co-instructor</span>' : ''}
           ${s.status === 'importing' ? '<span class="pill warn">importing</span>' : ''}
           ${s.status === 'error' ? `<span class="pill err" title="${escapeHtml(s.statusMessage || '')}">import failed</span>` : ''}
         </div>
@@ -107,7 +108,7 @@ function renderSessions(sessions) {
       <div class="row">
         <a class="btn btn-sm btn-primary" href="/t/${s.code}?key=${encodeURIComponent(s.key)}">Open dashboard</a>
         <button class="btn-sm" data-copy="${escapeHtml(s.studentUrl)}">Copy student link</button>
-        <button class="btn-sm btn-danger" data-delete="${s.code}" data-key="${escapeHtml(s.key)}">Delete</button>
+        ${s.role === 'owner' ? `<button class="btn-sm btn-danger" data-delete="${s.code}" data-key="${escapeHtml(s.key)}">Delete</button>` : ''}
       </div>
     </li>`).join('');
   $('#sessions').addEventListener('click', async (e) => {

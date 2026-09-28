@@ -4,14 +4,18 @@
   const POLL_MS = 400;
   let sessions = [];          // [{ server, code, key, presentationId, title }]
   let followInEditor = false;
+  let paused = false;
+  let instructorName = '';
   let last = '';              // last "presentationId:objectId" we reported
   let inflight = false;
   let badge = null;
 
   function loadSettings() {
-    chrome.storage.sync.get({ sessions: [], followInEditor: false }, (v) => {
+    chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, instructorName: '' }, (v) => {
       sessions = v.sessions || [];
       followInEditor = Boolean(v.followInEditor);
+      paused = Boolean(v.paused);
+      instructorName = v.instructorName || '';
       last = '';
       tick();
     });
@@ -44,7 +48,7 @@
       const res = await fetch(`${session.server}/api/ext/session/${session.code}/slide`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-session-key': session.key },
-        body: JSON.stringify({ objectId: info.objectId, presentationId: info.presentationId }),
+        body: JSON.stringify({ objectId: info.objectId, presentationId: info.presentationId, by: instructorName || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -58,7 +62,7 @@
   }
 
   function tick() {
-    if (inflight || !sessions.length) return;
+    if (inflight || paused || !sessions.length) return;
     const info = parseSlidesUrl(location.href);
     if (!info || !info.objectId) return;
     if (info.mode !== 'present' && !followInEditor) return;

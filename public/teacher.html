@@ -49,12 +49,15 @@
       <div class="tiny row">
         <span id="conn" class="pill">connecting</span>
         <span id="participants" class="pill">0 students</span>
+        <button id="me" class="pill" style="min-height:0;border:0;cursor:pointer" title="Change the name co-instructors see">You: …</button>
+        <span id="instructors" class="pill" title="Instructors on this dashboard right now"></span>
         <span>Keys: <span class="kbd">←</span> <span class="kbd">→</span> change slide</span>
       </div>
     </div>
     <div class="row">
       <a id="present-link" class="btn btn-sm" target="_blank" rel="noopener">Projected results ↗</a>
       <button id="copy-student" class="btn-sm">Copy student link</button>
+      <button id="invite" class="btn-sm" title="Co-instructors can change slides and see results, but not delete or re-import">Invite co-instructor</button>
       <button id="reimport" class="btn-sm" title="Fetch the slides again after you edit the deck">Re-import slides</button>
       <a class="btn btn-sm" href="/">All presentations</a>
     </div>
@@ -71,6 +74,7 @@
           <div style="text-align:center">
             <div class="pos" id="pos">–</div>
             <div class="tiny" id="slide-title"></div>
+            <div class="tiny" id="changed-by"></div>
           </div>
           <button id="next" class="btn-icon" aria-label="Next slide">▶</button>
         </div>
@@ -144,6 +148,29 @@ try {
   document.body.innerHTML = `<div class="container narrow"><div class="card"><h1>Can't open dashboard</h1><p>${escapeHtml(err.message)}</p><p><a href="/">Back to your presentations</a></p></div></div>`;
   throw err;
 }
+const NAME_KEY = 'slidepulse.instructorName';
+let myName = '';
+try { myName = localStorage.getItem(NAME_KEY) || ''; } catch {}
+if (!myName) {
+  myName = (prompt('Your name, shown to co-instructors when you change slides:', '') || '').trim().slice(0, 40) || 'Instructor';
+  try { localStorage.setItem(NAME_KEY, myName); } catch {}
+}
+$('#me').textContent = `You: ${myName}`;
+$('#me').addEventListener('click', () => {
+  const n = (prompt('Your name:', myName) || '').trim().slice(0, 40);
+  if (!n) return;
+  myName = n;
+  try { localStorage.setItem(NAME_KEY, myName); } catch {}
+  $('#me').textContent = `You: ${myName}`;
+  location.reload(); // reconnect the live socket with the new name
+});
+
+if (info.role !== 'owner') {
+  $('#reimport').style.display = 'none';
+  $('#invite').style.display = 'none';
+  $('#title').insertAdjacentHTML('afterend', '<span class="pill">co-instructor</span>');
+}
+$('#invite').addEventListener('click', () => copyText(info.cohostUrl));
 $('#qr').src = `/api/sessions/${code}/qr.svg`;
 $('#join-url').textContent = info.studentUrl.replace(/^https?:\/\//, '');
 $('#code').textContent = code;
@@ -153,13 +180,23 @@ $('#copy-dashboard').addEventListener('click', () => copyText(info.teacherUrl));
 if (!info.presentationId) $('#ext-help').style.display = 'none';
 
 connectLive({
-  code, role: 'teacher', key,
+  code, role: 'teacher', key, name: myName,
   onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting…'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
   onMessage: (msg) => {
     if (msg.type === 'session') { session = msg.session; renderSession(); renderTable(); renderQuestions(); }
     if (msg.type === 'results') { results = msg.results; renderCounts(); renderTable(); renderQuestions(); renderThumbs(); }
+    if (msg.type === 'presence') {
+      const others = msg.instructors.filter((n) => n !== myName);
+      $('#instructors').textContent = others.length ? `Also here: ${others.join(', ')}` : 'Only you are here';
+    }
   },
 });
+
+function renderChangedBy() {
+  const el = $('#changed-by');
+  if (!session?.changedBy || !session.changedAt) return (el.textContent = '');
+  el.textContent = session.changedBy === myName ? '' : `Set by ${session.changedBy} · ${timeAgo(session.changedAt)}`;
+}
 
 const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0 };
 
@@ -183,6 +220,7 @@ function renderSession() {
   else frame.innerHTML = `<span>${session.slideCount ? 'Slide image not ready yet' : 'No slides'}</span>`;
   $('#pos').textContent = session.slideCount ? `Slide ${session.currentSlide + 1} of ${session.slideCount}` : 'No slides';
   $('#slide-title').textContent = slide?.title || '';
+  renderChangedBy();
   $('#prev').disabled = session.currentSlide <= 0;
   $('#next').disabled = session.currentSlide >= session.slideCount - 1;
   renderCounts();
@@ -249,8 +287,9 @@ function renderQuestions() {
 async function goTo(idx) {
   if (!session || idx < 0 || idx >= session.slideCount) return;
   session.currentSlide = idx; // optimistic
+  session.changedBy = myName;
   renderSession();
-  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx }, headers }); }
+  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName }, headers }); }
   catch (err) { toast(err.message); }
 }
 async function reimport() {
@@ -279,7 +318,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Home') goTo(0);
   if (e.key === 'End') goTo(session.slideCount - 1);
 });
-setInterval(renderQuestions, 30_000);
+setInterval(() => { renderQuestions(); renderChangedBy(); }, 30_000);
 </script>
 </body>
 </html>

@@ -119,18 +119,35 @@ function loadSession(req, res, next) {
   next();
 }
 
-/** Teacher-only routes: accept the session key (header or query) or the owner's cookie. */
-function requireTeacher(req, res, next) {
+/** Resolve the caller's role for req.session: 'owner', 'cohost' or null. */
+function roleFor(req) {
   const key = req.get('x-session-key') || req.query.key;
-  const owner = currentTeacher(req);
-  if ((key && key === req.session.key) || (owner && owner.id === req.session.teacher_id)) return next();
-  res.status(403).json({ error: 'Not allowed' });
+  if (key && key === req.session.key) return 'owner';
+  if (key && key === req.session.cohost_key) return 'cohost';
+  const teacher = currentTeacher(req);
+  return teacher ? Sessions.roleFor(req.session, teacher.id) : null;
 }
 
-function sessionSummary(s) {
+/** Instructor routes (owner or co-instructor). Sets req.role. */
+function requireTeacher(req, res, next) {
+  req.role = roleFor(req);
+  if (!req.role) return res.status(403).json({ error: 'Not allowed' });
+  next();
+}
+
+/** Owner-only routes: delete, re-import, invite. */
+function requireOwner(req, res, next) {
+  if (req.role !== 'owner') return res.status(403).json({ error: 'Only the presentation owner can do that' });
+  next();
+}
+
+const cleanName = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 40) || null;
+
+function sessionSummary(s, role = 'owner') {
   return {
     code: s.code,
-    key: s.key,
+    key: role === 'owner' ? s.key : s.cohost_key,
+    role,
     title: s.title,
     status: s.status,
     statusMessage: s.status_message,
@@ -138,8 +155,11 @@ function sessionSummary(s) {
     currentSlide: s.current_slide,
     presentationId: s.presentation_id,
     createdAt: s.created_at,
+    changedBy: s.changed_by,
+    changedAt: s.changed_at,
     studentUrl: studentUrl(s.code),
-    teacherUrl: `${config.baseUrl}/t/${s.code}?key=${s.key}`,
+    teacherUrl: `${config.baseUrl}/t/${s.code}?key=${role === 'owner' ? s.key : s.cohost_key}`,
+    cohostUrl: role === 'owner' ? `${config.baseUrl}/t/${s.code}?key=${s.cohost_key}` : undefined,
     presentUrl: `${config.baseUrl}/p/${s.code}`,
   };
 }
@@ -154,7 +174,7 @@ app.get('/api/me', (req, res) => {
     googleConfigured,
     demoMode: config.demoMode,
     baseUrl: config.baseUrl,
-    sessions: t ? Sessions.listForTeacher(t.id).map(sessionSummary) : [],
+    sessions: t ? Sessions.listForTeacher(t.id).map((row) => sessionSummary(row, row.role)) : [],
   });
 });
 
@@ -191,7 +211,10 @@ app.get('/api/sessions/:code/qr.svg', loadSession, async (req, res) => {
 });
 
 app.get('/api/sessions/:code/teacher', loadSession, requireTeacher, (req, res) => {
-  res.json({ ...sessionSummary(req.session), results: resultsState(req.session.code) });
+  // A signed-in instructor opening an invite link gets the session added to their list.
+  const teacher = currentTeacher(req);
+  if (teacher && !Sessions.roleFor(req.session, teacher.id)) Sessions.addMember(req.session.code, teacher.id, req.role);
+  res.json({ ...sessionSummary(req.session, req.role), results: resultsState(req.session.code) });
 });
 
 app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) => {
@@ -199,12 +222,12 @@ app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) =>
   let idx = Number(req.body?.index);
   if (!Number.isInteger(idx)) return res.status(400).json({ error: 'index must be an integer' });
   idx = Math.max(0, Math.min(Math.max(s.slide_count - 1, 0), idx));
-  Sessions.setCurrentSlide(s.code, idx);
+  Sessions.setCurrentSlide(s.code, idx, cleanName(req.body?.by));
   broadcastSession(s.code);
   res.json({ currentSlide: idx });
 });
 
-app.post('/api/sessions/:code/reimport', loadSession, requireTeacher, (req, res) => {
+app.post('/api/sessions/:code/reimport', loadSession, requireTeacher, requireOwner, (req, res) => {
   const s = req.session;
   if (!s.presentation_id) return res.status(400).json({ error: 'Demo sessions cannot be re-imported' });
   const teacher = Teachers.get(s.teacher_id);
@@ -223,7 +246,7 @@ app.post('/api/sessions/:code/questions/:id', loadSession, requireTeacher, (req,
   res.json({ ok: true });
 });
 
-app.delete('/api/sessions/:code', loadSession, requireTeacher, (req, res) => {
+app.delete('/api/sessions/:code', loadSession, requireTeacher, requireOwner, (req, res) => {
   Sessions.remove(req.session.code);
   res.json({ ok: true });
 });
@@ -249,6 +272,7 @@ app.get('/api/ext/session/:code', loadSession, requireTeacher, (req, res) => {
     slideCount: s.slide_count,
     currentSlide: s.current_slide,
     demo: !s.presentation_id,
+    role: req.role,
   });
 });
 
@@ -264,7 +288,7 @@ app.post('/api/ext/session/:code/slide', loadSession, requireTeacher, (req, res)
   const slide = Sessions.slides(s.code).find((sl) => sl.object_id === objectId);
   if (!slide) return res.status(404).json({ error: 'Slide not found in this session. Re-import the deck if you edited it.' });
   if (slide.idx !== s.current_slide) {
-    Sessions.setCurrentSlide(s.code, slide.idx);
+    Sessions.setCurrentSlide(s.code, slide.idx, cleanName(req.body?.by));
     broadcastSession(s.code);
   }
   res.json({ index: slide.idx, slideCount: s.slide_count });

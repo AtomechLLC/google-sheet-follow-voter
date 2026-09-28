@@ -58,11 +58,24 @@ CREATE TABLE IF NOT EXISTS questions (
   answered INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS session_members (
+  session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
+  teacher_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner','cohost')),
+  PRIMARY KEY (session_code, teacher_id)
+);
 CREATE INDEX IF NOT EXISTS votes_session ON votes(session_code, slide_idx);
 CREATE INDEX IF NOT EXISTS questions_session ON questions(session_code, slide_idx);
 `);
 
+// Additive migrations for databases created by earlier versions.
+const sessionCols = new Set(db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name));
+if (!sessionCols.has('cohost_key')) db.exec('ALTER TABLE sessions ADD COLUMN cohost_key TEXT');
+if (!sessionCols.has('changed_by')) db.exec('ALTER TABLE sessions ADD COLUMN changed_by TEXT');
+if (!sessionCols.has('changed_at')) db.exec('ALTER TABLE sessions ADD COLUMN changed_at INTEGER');
+
 const now = () => Date.now();
+const newKey = () => crypto.randomBytes(12).toString('base64url');
 
 // Unambiguous alphabet for join codes (no 0/O, 1/I/L).
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -71,6 +84,10 @@ function randomCode(len = 6) {
   let out = '';
   for (let i = 0; i < len; i++) out += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
   return out;
+}
+
+for (const row of db.prepare('SELECT code FROM sessions WHERE cohost_key IS NULL').all()) {
+  db.prepare('UPDATE sessions SET cohost_key = ? WHERE code = ?').run(newKey(), row.code);
 }
 
 // ---------- teachers ----------
@@ -85,12 +102,21 @@ const stmt = {
   deleteTeacher: db.prepare('DELETE FROM teachers WHERE id = ?'),
 
   getSession: db.prepare('SELECT * FROM sessions WHERE code = ?'),
-  listSessionsForTeacher: db.prepare('SELECT * FROM sessions WHERE teacher_id = ? ORDER BY created_at DESC'),
-  insertSession: db.prepare(
-    'INSERT INTO sessions (code, key, teacher_id, title, presentation_id, status, status_message, slide_count, current_slide, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
+  listSessionsForTeacher: db.prepare(
+    `SELECT s.*, COALESCE(m.role, 'owner') AS role FROM sessions s
+     LEFT JOIN session_members m ON m.session_code = s.code AND m.teacher_id = ?
+     WHERE s.teacher_id = ? OR m.teacher_id IS NOT NULL
+     ORDER BY s.created_at DESC`
   ),
+  insertSession: db.prepare(
+    'INSERT INTO sessions (code, key, cohost_key, teacher_id, title, presentation_id, status, status_message, slide_count, current_slide, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
+  ),
+  upsertMember: db.prepare(
+    'INSERT INTO session_members (session_code, teacher_id, role) VALUES (?, ?, ?) ON CONFLICT(session_code, teacher_id) DO UPDATE SET role = excluded.role'
+  ),
+  getMember: db.prepare('SELECT role FROM session_members WHERE session_code = ? AND teacher_id = ?'),
   updateSessionStatus: db.prepare('UPDATE sessions SET status = ?, status_message = ?, slide_count = ?, title = ? WHERE code = ?'),
-  setCurrentSlide: db.prepare('UPDATE sessions SET current_slide = ? WHERE code = ?'),
+  setCurrentSlide: db.prepare('UPDATE sessions SET current_slide = ?, changed_by = ?, changed_at = ? WHERE code = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE code = ?'),
 
   deleteSlides: db.prepare('DELETE FROM slides WHERE session_code = ?'),
@@ -140,13 +166,13 @@ export const Teachers = {
 
 export const Sessions = {
   get: (code) => stmt.getSession.get(code),
-  listForTeacher: (teacherId) => stmt.listSessionsForTeacher.all(teacherId),
+  listForTeacher: (teacherId) => stmt.listSessionsForTeacher.all(teacherId, teacherId),
   create({ teacherId, title, presentationId, status = 'importing' }) {
     let code;
     do code = randomCode(6);
     while (stmt.getSession.get(code));
-    const key = crypto.randomBytes(12).toString('base64url');
-    stmt.insertSession.run(code, key, teacherId || null, title, presentationId || null, status, null, now());
+    stmt.insertSession.run(code, newKey(), newKey(), teacherId || null, title, presentationId || null, status, null, now());
+    if (teacherId) stmt.upsertMember.run(code, teacherId, 'owner');
     return stmt.getSession.get(code);
   },
   setStatus(code, { status, message = null, slideCount, title }) {
@@ -160,9 +186,16 @@ export const Sessions = {
       code
     );
   },
-  setCurrentSlide(code, idx) {
-    stmt.setCurrentSlide.run(idx, code);
+  setCurrentSlide(code, idx, by = null) {
+    stmt.setCurrentSlide.run(idx, by, now(), code);
   },
+  /** Role of a signed-in teacher for this session: 'owner', 'cohost' or null. */
+  roleFor(session, teacherId) {
+    if (!teacherId) return null;
+    if (session.teacher_id === teacherId) return 'owner';
+    return stmt.getMember.get(session.code, teacherId)?.role || null;
+  },
+  addMember: (code, teacherId, role) => stmt.upsertMember.run(code, teacherId, role),
   remove: (code) => stmt.deleteSession.run(code),
   replaceSlides: db.transaction((code, slides) => {
     stmt.deleteSlides.run(code);

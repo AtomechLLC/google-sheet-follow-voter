@@ -35,7 +35,7 @@ export function toast(msg, ms = 1800) {
 }
 
 /** WebSocket with automatic reconnect. onMessage(msg) receives parsed JSON. */
-export function connectLive({ code, role, key, onMessage, onStatus = () => {} }) {
+export function connectLive({ code, role, key, name, onMessage, onStatus = () => {} }) {
   let ws;
   let delay = 500;
   let closed = false;
@@ -43,6 +43,7 @@ export function connectLive({ code, role, key, onMessage, onStatus = () => {} })
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams({ code, role });
     if (key) params.set('key', key);
+    if (name) params.set('name', name);
     ws = new WebSocket(`${proto}://${location.host}/ws?${params}`);
     ws.onopen = () => { delay = 500; onStatus('online'); };
     ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch {} };

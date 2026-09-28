@@ -12,6 +12,8 @@ export function publicState(code) {
     statusMessage: s.status_message,
     slideCount: s.slide_count,
     currentSlide: s.current_slide,
+    changedBy: s.changed_by,
+    changedAt: s.changed_at,
     slides: Sessions.slides(code).map((sl) => ({
       idx: sl.idx,
       title: sl.title,
@@ -52,6 +54,19 @@ export function broadcastSession(code) {
   broadcast(code, null, () => ({ type: 'session', session: publicState(code) }));
 }
 
+/** Instructors currently connected to the dashboard (names, deduplicated). */
+export function instructorsOnline(code) {
+  const names = [];
+  for (const ws of rooms.get(code) || []) {
+    if (ws.role === 'teacher' && ws.readyState === ws.OPEN) names.push(ws.name || 'Instructor');
+  }
+  return [...new Set(names)];
+}
+
+export function broadcastPresence(code) {
+  broadcast(code, (ws) => ws.role === 'teacher', () => ({ type: 'presence', instructors: instructorsOnline(code) }));
+}
+
 /** Notify teacher/present clients that votes or questions changed. */
 export function broadcastResults(code) {
   broadcast(code, (ws) => ws.role !== 'student', () => ({ type: 'results', results: resultsState(code) }));
@@ -71,8 +86,10 @@ export function attachWebSocket(server) {
       ws.close();
       return;
     }
-    // Teacher connections must present the session key; "present" (projected) is public.
-    ws.role = role === 'teacher' && key === session.key ? 'teacher' : role === 'present' ? 'present' : 'student';
+    // Teacher connections must present the owner or co-instructor key; "present" (projected) is public.
+    const isInstructor = role === 'teacher' && key && (key === session.key || key === session.cohost_key);
+    ws.role = isInstructor ? 'teacher' : role === 'present' ? 'present' : 'student';
+    ws.name = String(url.searchParams.get('name') || '').replace(/\s+/g, ' ').trim().slice(0, 40);
     ws.code = code;
     ws.isAlive = true;
     ws.on('pong', () => (ws.isAlive = true));
@@ -82,6 +99,7 @@ export function attachWebSocket(server) {
 
     send(ws, { type: 'session', session: publicState(code) });
     if (ws.role !== 'student') send(ws, { type: 'results', results: resultsState(code) });
+    if (ws.role === 'teacher') broadcastPresence(code);
 
     ws.on('close', () => {
       const room = rooms.get(code);
@@ -89,6 +107,7 @@ export function attachWebSocket(server) {
         room.delete(ws);
         if (room.size === 0) rooms.delete(code);
       }
+      if (ws.role === 'teacher') broadcastPresence(code);
     });
     ws.on('error', () => {});
   });

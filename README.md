@@ -14,7 +14,7 @@ Live, anonymous, slide-by-slide feedback for Google Slides presentations.
 | Page | URL | Who |
 |---|---|---|
 | Home | `/` | Teacher: sign in, paste a deck link, list past presentations |
-| Dashboard | `/t/CODE?key=…` | Teacher: current slide, Prev/Next (also ← → keys), QR code, per-slide totals, question feed |
+| Dashboard | `/t/CODE?key=…` | Instructors (owner or invited co-instructors): current slide, Prev/Next (also ← → keys), QR code, per-slide totals, question feed |
 | Student | `/s/CODE` | Students: follows your current slide, three feedback buttons, can browse back to earlier slides |
 | Projected results | `/p/CODE` | Anyone: a bar per slide, top-slide summary, optional question list for the projector |
 
@@ -80,6 +80,22 @@ docker compose up -d --build
 The container listens on port 3000 and keeps its data in the `slide-pulse-data` volume.
 Put it behind any HTTPS reverse proxy (Caddy, nginx, Fly.io, Railway, Render, …) and set `BASE_URL` to
 the public https URL. WebSockets must be passed through (`/ws`); Caddy and most platforms do this by default.
+
+## Two (or more) instructors
+
+Any number of instructors can drive the same presentation.
+
+- On the dashboard click **Invite co-instructor** to copy an invite link and send it to your colleague.
+  It opens the same dashboard with the same controls, except **Re-import** and **Delete**, which stay
+  with the owner. If the colleague is signed in with Google, the presentation also appears in their list.
+- Everyone picks a display name the first time they open the dashboard (click the "You: …" pill to
+  change it). When someone else changes the slide you see "Set by Sam · just now" under the slide
+  number, and the header shows who else is on the dashboard right now.
+- The last change wins. There is no lock, so agree who is driving; the attribution line makes an
+  accidental takeover obvious.
+- With the Chrome extension, each instructor pairs their own browser using the invite link (or the
+  owner link). Set your name in the popup so changes are attributed. When a colleague is presenting
+  from their laptop, tick **Pause** in your popup so your open copy of the deck doesn't fight theirs.
 
 ## Chrome extension: phones follow Google Slides automatically
 

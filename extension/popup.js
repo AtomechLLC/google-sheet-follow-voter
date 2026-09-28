@@ -8,12 +8,16 @@ function render(sessions) {
 }
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-chrome.storage.sync.get({ sessions: [], followInEditor: false }, (v) => {
+chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, instructorName: '' }, (v) => {
   render(v.sessions);
   $('#editor').checked = Boolean(v.followInEditor);
+  $('#paused').checked = Boolean(v.paused);
+  $('#name').value = v.instructorName || '';
 });
 
 $('#editor').addEventListener('change', () => chrome.storage.sync.set({ followInEditor: $('#editor').checked }));
+$('#paused').addEventListener('change', () => chrome.storage.sync.set({ paused: $('#paused').checked }));
+$('#name').addEventListener('change', () => chrome.storage.sync.set({ instructorName: $('#name').value.trim().slice(0, 40) }));
 
 $('#list').addEventListener('click', (e) => {
   const b = e.target.closest('[data-i]');
@@ -39,7 +43,7 @@ $('#pair').addEventListener('click', async () => {
       chrome.storage.sync.set({ sessions }, () => {
         render(sessions);
         $('#link').value = '';
-        msg(`Paired “${data.title}”. Open the deck and start presenting.`, 'ok');
+        msg(`Paired “${data.title}”${data.role === 'cohost' ? ' as co-instructor' : ''}. Open the deck and start presenting.`, 'ok');
       });
     });
   } catch (err) {

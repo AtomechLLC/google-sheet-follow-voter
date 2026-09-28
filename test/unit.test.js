@@ -8,7 +8,8 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'slidepulse-test-')
 process.env.SESSION_SECRET = 'test';
 
 const { parsePresentationId, createDemoSlides } = await import('../src/google.js');
-const { Sessions, Votes, Questions } = await import('../src/db.js');
+const db = await import('../src/db.js');
+const { Sessions, Votes, Questions } = db;
 
 test('parsePresentationId accepts edit/present/bare-id forms', () => {
   const id = '1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd';
@@ -44,4 +45,25 @@ test('demo slide images are well-formed SVG (ampersands escaped)', () => {
     const svg = fs.readFileSync(path.join(process.env.DATA_DIR, 'slides', s.code, sl.image), 'utf8');
     assert.doesNotMatch(svg, /&(?!(amp|lt|gt|quot|apos);)/);
   }
+});
+
+test('co-instructor membership: roles and per-teacher listing', () => {
+  const { Teachers } = db;
+  const owner = Teachers.create({ accessToken: 'a', refreshToken: 'r', expiresAt: 0 });
+  const cohost = Teachers.create({ accessToken: 'a', refreshToken: 'r', expiresAt: 0 });
+  const s = Sessions.create({ teacherId: owner.id, title: 'Shared' });
+  assert.ok(s.cohost_key && s.cohost_key !== s.key);
+
+  assert.equal(Sessions.roleFor(s, owner.id), 'owner');
+  assert.equal(Sessions.roleFor(s, cohost.id), null);
+  Sessions.addMember(s.code, cohost.id, 'cohost');
+  assert.equal(Sessions.roleFor(s, cohost.id), 'cohost');
+
+  const mine = Sessions.listForTeacher(cohost.id).filter((x) => x.code === s.code);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].role, 'cohost');
+  assert.equal(Sessions.listForTeacher(owner.id).find((x) => x.code === s.code).role, 'owner');
+
+  Sessions.setCurrentSlide(s.code, 1, 'Sam');
+  assert.equal(Sessions.get(s.code).changed_by, 'Sam');
 });
