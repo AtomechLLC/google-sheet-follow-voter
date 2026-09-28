@@ -105,6 +105,14 @@ export function translationInfo() {
   };
 }
 
+/** Translate arbitrary text from `from` to `to` (both app language codes). Returns null when not possible. */
+export async function translateBetween(text, from, to) {
+  if (!text || from === to || !provider) return null;
+  if (!provider.supports(to) || (from && !provider.supports(from))) return null;
+  const clipped = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
+  return provider.translate(clipped, to, from);
+}
+
 /** Translate `text` to `target`. Returns the original text when no translation is needed/possible. */
 export async function translateText(text, target) {
   if (!text || target === sourceLanguage) return { text, translated: false };

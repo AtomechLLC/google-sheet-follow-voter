@@ -15,9 +15,10 @@ import {
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults } from './live.js';
 import { zipDirectory } from './zip.js';
-import { translateText, translationInfo, provider as translationProvider } from './translate.js';
+import { translateText, translateBetween, translationInfo, provider as translationProvider } from './translate.js';
 import { byCode } from './languages.js';
-import { Translations } from './db.js';
+import { Translations, TextCache } from './db.js';
+import { notifyStudent } from './live.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
@@ -347,12 +348,36 @@ app.get('/api/sessions/:code/notes/:idx', loadSession, async (req, res, next) =>
 });
 
 // ---------- student API ----------
-app.get('/api/sessions/:code/me', loadSession, (req, res) => {
+/** Translate arbitrary text with a content-hash cache; returns null when nothing to do. */
+async function cachedTranslate(text, from, to) {
+  if (!text || from === to) return null;
+  const hash = crypto.createHash('sha1').update(`${from}\n${text}`).digest('hex');
+  const hit = TextCache.get(hash, to);
+  if (hit) return hit;
+  const out = await translateBetween(text, from, to);
+  if (out) TextCache.put(hash, to, out);
+  return out;
+}
+
+async function studentQuestions(code, studentId, lang) {
+  const source = translationInfo().source;
+  const qs = Questions.forStudent(code, studentId);
+  // Replies are written in the instructor's language; show them in the student's.
+  await Promise.all(qs.map(async (q) => {
+    if (q.reply && lang && lang !== source) {
+      try { q.reply_translated = await cachedTranslate(q.reply, source, lang); } catch (err) { console.error('[translate reply]', err.message); }
+    }
+  }));
+  return qs;
+}
+
+app.get('/api/sessions/:code/me', loadSession, async (req, res) => {
   const studentId = cleanStudentId(req.query.student);
   if (!studentId) return res.status(400).json({ error: 'bad student id' });
+  const lang = byCode(String(req.query.lang || '').toLowerCase()) ? String(req.query.lang).toLowerCase() : null;
   res.json({
     votes: Votes.forStudent(req.session.code, studentId),
-    questions: Questions.forStudent(req.session.code, studentId),
+    questions: await studentQuestions(req.session.code, studentId, lang),
   });
 });
 
@@ -371,7 +396,7 @@ app.post('/api/sessions/:code/vote', loadSession, (req, res) => {
   res.json({ active, votes: Votes.forStudent(s.code, studentId) });
 });
 
-app.post('/api/sessions/:code/question', loadSession, (req, res) => {
+app.post('/api/sessions/:code/question', loadSession, async (req, res) => {
   const s = req.session;
   const studentId = cleanStudentId(req.body?.studentId);
   const slide = Number(req.body?.slide);
@@ -381,10 +406,36 @@ app.post('/api/sessions/:code/question', loadSession, (req, res) => {
     return res.status(400).json({ error: 'bad slide index' });
   }
   if (!text) return res.status(400).json({ error: 'Question text is empty' });
+  const lang = byCode(String(req.body?.lang || '').toLowerCase()) ? String(req.body.lang).toLowerCase() : null;
   Votes.ensure(s.code, slide, studentId, 'question');
-  const id = Questions.add(s.code, slide, studentId, text);
+  const id = Questions.add(s.code, slide, studentId, text, lang);
   broadcastResults(s.code);
-  res.status(201).json({ id, votes: Votes.forStudent(s.code, studentId), questions: Questions.forStudent(s.code, studentId) });
+  res.status(201).json({ id, votes: Votes.forStudent(s.code, studentId), questions: await studentQuestions(s.code, studentId, lang) });
+  // A question typed in another language is translated for the instructor in the background.
+  const source = translationInfo().source;
+  if (lang && lang !== source) {
+    cachedTranslate(text, lang, source)
+      .then((out) => { if (out) { Questions.setSourceText(s.code, id, out); broadcastResults(s.code); } })
+      .catch((err) => console.error('[translate question]', err.message));
+  }
+});
+
+app.post('/api/sessions/:code/questions/:id/reply', loadSession, requireTeacher, async (req, res) => {
+  const id = Number(req.params.id);
+  const q = Questions.get(req.session.code, id);
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  const text = String(req.body?.text || '').trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ error: 'Reply is empty' });
+  Questions.reply(req.session.code, id, text, cleanName(req.body?.by));
+  broadcastResults(req.session.code);
+  res.json({ ok: true });
+  // Tell the student who asked, in their language.
+  try {
+    const [updated] = (await studentQuestions(req.session.code, q.student_id, q.lang)).filter((x) => x.id === id);
+    notifyStudent(req.session.code, q.student_id, { type: 'reply', question: updated });
+  } catch (err) {
+    console.error('[reply notify]', err.message);
+  }
 });
 
 // ---------- errors ----------

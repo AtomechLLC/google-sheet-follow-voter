@@ -6,7 +6,8 @@ Live, anonymous, slide-by-slide feedback for Google Slides presentations.
 2. The app fetches a picture of every slide and shows you a QR code.
 3. Students scan it on their phones. They see the slide you are on and three buttons:
    **This slide is great!**, **I didn't understand**, **I have a question** (with an optional typed question).
-4. Your dashboard shows, live, which slides collected the most confusion and questions.
+4. Your dashboard shows, live, which slides collected the most confusion and open questions
+(answered questions drop out of the ranking).
    Nobody has to raise a hand.
 
 ## What's inside
@@ -109,6 +110,18 @@ the flow can be tried without any key.
 
 Notes are read once at import. If you edit them in Google Slides, click **Re-import slides**; the
 cache notices the change and re-translates only the slides whose notes changed.
+
+## Replying to questions
+
+Every question in the dashboard feed has a **Reply** button. Type a reply (Ctrl/Cmd+Enter sends it)
+and the student who asked sees it on their phone under their question, with a short buzz and a
+"Your teacher replied" notice, even if they have moved to another slide. Replying also marks the
+question as answered; you can edit a reply later. Nobody else sees the reply except co-instructors
+and the projected results page, where it appears under the question.
+
+With translation configured, questions typed in another language arrive translated for you, with
+the original underneath, and your reply is translated back into the student's language. Each
+translation is cached, so nothing is paid for twice.
 
 ## Two (or more) instructors
 

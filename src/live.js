@@ -70,6 +70,11 @@ export function broadcastPresence(code) {
   broadcast(code, (ws) => ws.role === 'teacher', () => ({ type: 'presence', instructors: instructorsOnline(code) }));
 }
 
+/** Send a message to every open connection of one student (they may have several tabs). */
+export function notifyStudent(code, studentId, msg) {
+  broadcast(code, (ws) => ws.role === 'student' && ws.studentId === studentId, () => msg);
+}
+
 /** Notify teacher/present clients that votes or questions changed. */
 export function broadcastResults(code) {
   broadcast(code, (ws) => ws.role !== 'student', () => ({ type: 'results', results: resultsState(code) }));
@@ -93,6 +98,7 @@ export function attachWebSocket(server) {
     const isInstructor = role === 'teacher' && key && (key === session.key || key === session.cohost_key);
     ws.role = isInstructor ? 'teacher' : role === 'present' ? 'present' : 'student';
     ws.name = String(url.searchParams.get('name') || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    ws.studentId = ws.role === 'student' ? String(url.searchParams.get('student') || '').slice(0, 64) : null;
     ws.code = code;
     ws.isAlive = true;
     ws.on('pong', () => (ws.isAlive = true));

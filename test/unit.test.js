@@ -26,9 +26,9 @@ test('votes toggle and great/confused are mutually exclusive', () => {
   assert.equal(Sessions.get(s.code).slide_count, 3);
 
   assert.equal(Votes.toggle(s.code, 1, 'student-a', 'great'), true);
-  assert.deepEqual(Votes.counts(s.code)[1], { great: 1, confused: 0, question: 0 });
+  assert.deepEqual(Votes.counts(s.code)[1], { great: 1, confused: 0, question: 0, open: 0 });
   Votes.toggle(s.code, 1, 'student-a', 'confused');
-  assert.deepEqual(Votes.counts(s.code)[1], { great: 0, confused: 1, question: 0 });
+  assert.deepEqual(Votes.counts(s.code)[1], { great: 0, confused: 1, question: 0, open: 0 });
   assert.equal(Votes.toggle(s.code, 1, 'student-a', 'confused'), false);
   assert.equal(Votes.counts(s.code)[1], undefined);
 
@@ -66,4 +66,40 @@ test('co-instructor membership: roles and per-teacher listing', () => {
 
   Sessions.setCurrentSlide(s.code, 1, 'Sam');
   assert.equal(Sessions.get(s.code).changed_by, 'Sam');
+});
+
+test('replies: stored with author, mark answered, and text cache round-trips', async () => {
+  const s = Sessions.create({ title: 'R' });
+  createDemoSlides(s.code, 2);
+  const id = Questions.add(s.code, 1, 'student-r', 'Ce înseamnă asta?', 'ro');
+  assert.equal(Questions.get(s.code, id).lang, 'ro');
+  Questions.setSourceText(s.code, id, 'What does this mean?');
+  Questions.reply(s.code, id, 'It means X.', 'Alex');
+  const q = Questions.list(s.code).find((x) => x.id === id);
+  assert.equal(q.answered, 1);
+  assert.equal(q.reply, 'It means X.');
+  assert.equal(q.reply_by, 'Alex');
+  assert.equal(q.text_source, 'What does this mean?');
+  assert.equal(Questions.forStudent(s.code, 'student-r')[0].reply, 'It means X.');
+
+  const { TextCache } = db;
+  assert.equal(TextCache.get('h1', 'ro'), null);
+  TextCache.put('h1', 'ro', 'Înseamnă X.');
+  assert.equal(TextCache.get('h1', 'ro'), 'Înseamnă X.');
+});
+
+test('open question count excludes answered questions but keeps text-less flags', () => {
+  const s = Sessions.create({ title: 'O' });
+  createDemoSlides(s.code, 2);
+  Votes.toggle(s.code, 0, 'a', 'question'); // tapped, never typed -> stays open
+  Votes.ensure(s.code, 0, 'b', 'question');
+  const qb = Questions.add(s.code, 0, 'b', 'Why?');
+  Votes.ensure(s.code, 0, 'c', 'question');
+  const qc = Questions.add(s.code, 0, 'c', 'How?');
+  assert.deepEqual(Votes.counts(s.code)[0], { great: 0, confused: 0, question: 3, open: 3 });
+  Questions.setAnswered(s.code, qb, true);
+  assert.equal(Votes.counts(s.code)[0].open, 2);
+  Questions.reply(s.code, qc, 'Like this.', 'Alex'); // replying marks answered
+  assert.equal(Votes.counts(s.code)[0].open, 1);
+  assert.equal(Votes.counts(s.code)[0].question, 3);
 });

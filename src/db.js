@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS translations (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (session_code, slide_idx, lang)
 );
+CREATE TABLE IF NOT EXISTS text_cache (
+  hash TEXT NOT NULL,
+  lang TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (hash, lang)
+);
 CREATE TABLE IF NOT EXISTS session_members (
   session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
   teacher_id TEXT NOT NULL,
@@ -82,6 +89,10 @@ const sessionCols = new Set(db.prepare('PRAGMA table_info(sessions)').all().map(
 if (!sessionCols.has('cohost_key')) db.exec('ALTER TABLE sessions ADD COLUMN cohost_key TEXT');
 if (!sessionCols.has('changed_by')) db.exec('ALTER TABLE sessions ADD COLUMN changed_by TEXT');
 if (!sessionCols.has('changed_at')) db.exec('ALTER TABLE sessions ADD COLUMN changed_at INTEGER');
+const questionCols = new Set(db.prepare('PRAGMA table_info(questions)').all().map((c) => c.name));
+for (const [col, type] of [['lang', 'TEXT'], ['text_source', 'TEXT'], ['reply', 'TEXT'], ['reply_by', 'TEXT'], ['replied_at', 'INTEGER']]) {
+  if (!questionCols.has(col)) db.exec(`ALTER TABLE questions ADD COLUMN ${col} ${type}`);
+}
 const slideCols = new Set(db.prepare('PRAGMA table_info(slides)').all().map((c) => c.name));
 if (!slideCols.has('notes')) db.exec('ALTER TABLE slides ADD COLUMN notes TEXT');
 
@@ -154,17 +165,34 @@ const stmt = {
      FROM votes WHERE session_code = ? GROUP BY slide_idx`
   ),
   distinctStudents: db.prepare('SELECT COUNT(DISTINCT student_id) AS n FROM votes WHERE session_code = ?'),
+  // Open questions per slide: typed questions not yet answered, plus "I have a question" taps
+  // from students who never typed one (there is nothing for the instructor to mark answered).
+  openQuestions: db.prepare(
+    `SELECT slide_idx, SUM(n) AS open FROM (
+       SELECT slide_idx, COUNT(*) AS n FROM questions WHERE session_code = ? AND answered = 0 GROUP BY slide_idx
+       UNION ALL
+       SELECT v.slide_idx, COUNT(*) AS n FROM votes v
+        WHERE v.session_code = ? AND v.kind = 'question'
+          AND NOT EXISTS (SELECT 1 FROM questions q WHERE q.session_code = v.session_code AND q.slide_idx = v.slide_idx AND q.student_id = v.student_id)
+        GROUP BY v.slide_idx
+     ) GROUP BY slide_idx`
+  ),
 
   insertQuestion: db.prepare(
-    'INSERT INTO questions (session_code, slide_idx, student_id, text, created_at) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO questions (session_code, slide_idx, student_id, text, lang, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   listQuestions: db.prepare(
-    'SELECT id, slide_idx, text, answered, created_at FROM questions WHERE session_code = ? ORDER BY created_at DESC'
+    'SELECT id, slide_idx, text, lang, text_source, answered, reply, reply_by, replied_at, created_at FROM questions WHERE session_code = ? ORDER BY created_at DESC'
   ),
+  getQuestion: db.prepare('SELECT * FROM questions WHERE id = ? AND session_code = ?'),
   setQuestionAnswered: db.prepare('UPDATE questions SET answered = ? WHERE id = ? AND session_code = ?'),
+  setQuestionSourceText: db.prepare('UPDATE questions SET text_source = ? WHERE id = ? AND session_code = ?'),
+  setQuestionReply: db.prepare('UPDATE questions SET reply = ?, reply_by = ?, replied_at = ?, answered = 1 WHERE id = ? AND session_code = ?'),
   studentQuestions: db.prepare(
-    'SELECT id, slide_idx, text, answered, created_at FROM questions WHERE session_code = ? AND student_id = ? ORDER BY created_at DESC'
+    'SELECT id, slide_idx, text, lang, answered, reply, reply_by, replied_at, created_at FROM questions WHERE session_code = ? AND student_id = ? ORDER BY created_at DESC'
   ),
+  getCachedText: db.prepare('SELECT text FROM text_cache WHERE hash = ? AND lang = ?'),
+  putCachedText: db.prepare('INSERT OR REPLACE INTO text_cache (hash, lang, text, created_at) VALUES (?, ?, ?, ?)'),
 };
 
 export const Teachers = {
@@ -248,7 +276,10 @@ export const Votes = {
   counts(code) {
     const out = {};
     for (const row of stmt.countsForSession.all(code)) {
-      out[row.slide_idx] = { great: row.great, confused: row.confused, question: row.question };
+      out[row.slide_idx] = { great: row.great, confused: row.confused, question: row.question, open: 0 };
+    }
+    for (const row of stmt.openQuestions.all(code, code)) {
+      (out[row.slide_idx] ??= { great: 0, confused: 0, question: 0, open: 0 }).open = row.open;
     }
     return out;
   },
@@ -256,11 +287,20 @@ export const Votes = {
 };
 
 export const Questions = {
-  add(code, slideIdx, studentId, text) {
-    const info = stmt.insertQuestion.run(code, slideIdx, studentId, text, now());
+  add(code, slideIdx, studentId, text, lang = null) {
+    const info = stmt.insertQuestion.run(code, slideIdx, studentId, text, lang, now());
     return info.lastInsertRowid;
   },
+  get: (code, id) => stmt.getQuestion.get(id, code),
   list: (code) => stmt.listQuestions.all(code),
   forStudent: (code, studentId) => stmt.studentQuestions.all(code, studentId),
   setAnswered: (code, id, answered) => stmt.setQuestionAnswered.run(answered ? 1 : 0, id, code),
+  setSourceText: (code, id, text) => stmt.setQuestionSourceText.run(text, id, code),
+  reply: (code, id, text, by) => stmt.setQuestionReply.run(text, by, now(), id, code),
+};
+
+/** Generic translation cache keyed by content hash + target language (questions, replies). */
+export const TextCache = {
+  get: (hash, lang) => stmt.getCachedText.get(hash, lang)?.text ?? null,
+  put: (hash, lang, text) => stmt.putCachedText.run(hash, lang, text, now()),
 };

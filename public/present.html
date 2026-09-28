@@ -32,6 +32,7 @@
   .qs li { break-inside: avoid; padding: 8px 12px; margin-bottom: 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 1.05rem; }
   .qs li b { color: var(--question); margin-right: 8px; }
   .qs li.answered { opacity: .5; text-decoration: line-through; }
+  .qs li .reply { margin-top: 4px; color: var(--text-2); font-size: .95rem; }
   .controls { display: flex; gap: 8px; align-items: center; }
 </style>
 </head>
@@ -96,10 +97,10 @@ function render() {
   document.title = `${session.title} · Results`;
   $('#participants').textContent = `${results.participants} student${results.participants === 1 ? '' : 's'} responded`;
 
-  const rows = session.slides.map((s) => ({ idx: s.idx, title: s.title, ...(results.counts[s.idx] || { great: 0, confused: 0, question: 0 }) }));
+  const rows = session.slides.map((s) => ({ idx: s.idx, title: s.title, ...({ open: 0, ...(results.counts[s.idx] || { great: 0, confused: 0, question: 0 }) }) }));
   const max = Math.max(1, ...rows.map((r) => r.great + r.confused + r.question));
   const sorted = [...rows];
-  if ($('#attention').checked) sorted.sort((a, b) => (b.confused + b.question) - (a.confused + a.question) || a.idx - b.idx);
+  if ($('#attention').checked) sorted.sort((a, b) => (b.confused + b.open) - (a.confused + a.open) || a.idx - b.idx);
 
   const seg = (v, offset, cls) => v ? `<span class="seg ${cls}" style="left:${offset / max * 100}%;width:${v / max * 100}%;background:var(--${cls})" title="${v}"></span>` : '';
   $('#chart').innerHTML = sorted.map((r) => `
@@ -117,7 +118,7 @@ function render() {
   $('#top-great').textContent = top('great');
 
   $('#qs').classList.toggle('show', $('#show-q').checked);
-  $('#qlist').innerHTML = results.questions.map((q) => `<li class="${q.answered ? 'answered' : ''}"><b>#${q.slide_idx + 1}</b>${escapeHtml(q.text)}</li>`).join('') || '<li class="muted">No questions yet.</li>';
+  $('#qlist').innerHTML = results.questions.map((q) => `<li class="${q.answered && !q.reply ? 'answered' : ''}"><b>#${q.slide_idx + 1}</b>${escapeHtml(q.text_source || q.text)}${q.reply ? `<div class="reply">↳ ${escapeHtml(q.reply)}</div>` : ''}</li>`).join('') || '<li class="muted">No questions yet.</li>';
 }
 </script>
 </body>

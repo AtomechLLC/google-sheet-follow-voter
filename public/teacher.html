@@ -28,7 +28,13 @@
   .qlist { list-style: none; margin: 0; padding: 0; }
   .qlist li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
   .qlist li:first-child { border-top: 0; }
-  .qlist li.answered { opacity: .55; }
+  .qlist li.answered { opacity: .75; }
+  .qlist .orig { color: var(--text-3); font-size: .8rem; }
+  .qlist .reply { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--great-soft); font-size: .9rem; white-space: pre-wrap; }
+  .qlist .reply-form { display: none; margin-top: 6px; }
+  .qlist .reply-form.show { display: block; }
+  .qlist .reply-form textarea { min-height: 56px; font-size: .9rem; }
+  .qlist .actions { flex: none; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
   .qlist .slide-tag { flex: none; min-width: 48px; text-align: center; font-weight: 700; border-radius: 8px; padding: 4px 6px; background: var(--question-soft); color: var(--question); cursor: pointer; }
   .qlist .text { flex: 1; white-space: pre-wrap; word-break: break-word; }
   .kbd { font-family: ui-monospace, monospace; font-size: .75rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--text-2); }
@@ -135,7 +141,7 @@
           </select>
         </div>
         <table id="table">
-          <thead><tr><th>#</th><th>Title</th><th class="num" title="This slide is great">👍</th><th class="num" title="I didn't understand">🤔</th><th class="num" title="Questions">❓</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>Title</th><th class="num" title="This slide is great">👍</th><th class="num" title="I didn't understand">🤔</th><th class="num" title="Open questions (answered ones drop out). Total asked shown after the slash.">❓</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -210,7 +216,7 @@ function renderChangedBy() {
   el.textContent = session.changedBy === myName ? '' : `Set by ${session.changedBy} · ${timeAgo(session.changedAt)}`;
 }
 
-const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0 };
+const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0, open: 0 };
 
 function renderSession() {
   document.title = `${session.title} · Slide Pulse`;
@@ -247,7 +253,8 @@ function renderCounts() {
   const c = countsFor(session.currentSlide);
   $('#c-great').textContent = c.great;
   $('#c-confused').textContent = c.confused;
-  $('#c-question').textContent = c.question;
+  $('#c-question').textContent = c.open;
+  $('#c-question').title = `${c.open} open of ${c.question} asked`;
   $('#participants').textContent = `${results.participants} student${results.participants === 1 ? '' : 's'} responded`;
 }
 
@@ -256,7 +263,7 @@ function renderThumbs() {
   const el = $('#thumbs');
   el.innerHTML = session.slides.map((s) => {
     const c = countsFor(s.idx);
-    const hot = c.confused + c.question;
+    const hot = c.confused + c.open;
     return `<button data-go="${s.idx}" class="${s.idx === session.currentSlide ? 'current' : ''}" title="Slide ${s.idx + 1}${s.title ? ': ' + escapeHtml(s.title) : ''}">
       ${s.image ? `<img src="${s.image}" alt="">` : '<div style="width:96px;aspect-ratio:16/9;background:var(--surface-2);border-radius:4px"></div>'}
       <span class="n">${s.idx + 1}</span>${hot ? `<span class="badge">${hot}</span>` : ''}
@@ -270,13 +277,13 @@ function renderTable() {
   const rows = session.slides.map((s) => ({ ...s, ...countsFor(s.idx) }));
   const max = Math.max(1, ...rows.map((r) => r.great + r.confused + r.question));
   if ($('#sort').value === 'attention') {
-    rows.sort((a, b) => (b.confused + b.question) - (a.confused + a.question) || b.great - a.great || a.idx - b.idx);
+    rows.sort((a, b) => (b.confused + b.open) - (a.confused + a.open) || b.question - a.question || b.great - a.great || a.idx - b.idx);
   }
   $('#table tbody').innerHTML = rows.map((r) => `
     <tr class="clickable ${r.idx === session.currentSlide ? 'current' : ''}" data-go="${r.idx}">
       <td class="mono">${r.idx + 1}</td>
       <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.title || '')}</td>
-      <td class="num">${r.great}</td><td class="num">${r.confused}</td><td class="num">${r.question}</td>
+      <td class="num">${r.great}</td><td class="num">${r.confused}</td><td class="num" title="${r.open} open of ${r.question} asked">${r.open}${r.question > r.open ? `<span class="tiny"> /${r.question}</span>` : ''}</td>
       <td><div class="bar">
         <span style="left:0;width:${(r.great / max) * 100}%;background:var(--great)"></span>
         <span style="left:${(r.great / max) * 100}%;width:${(r.confused / max) * 100}%;background:var(--confused)"></span>
@@ -291,12 +298,29 @@ function renderQuestions() {
   if ($('#q-current').checked) qs = qs.filter((q) => q.slide_idx === session.currentSlide);
   const open = results.questions.filter((q) => !q.answered).length;
   $('#q-count').textContent = open ? `${open} open` : '';
-  $('#questions').innerHTML = qs.map((q) => `
+  const openForms = new Set($$('.reply-form.show').map((f) => f.dataset.form));
+  const drafts = Object.fromEntries($$('.reply-form textarea').map((t) => [t.dataset.draft, t.value]));
+  $('#questions').innerHTML = qs.map((q) => {
+    const shown = q.text_source || q.text;
+    const original = q.text_source ? `<div class="orig">Original (${escapeHtml(q.lang || '?')}): ${escapeHtml(q.text)}</div>` : '';
+    const reply = q.reply
+      ? `<div class="reply"><b>Reply</b>${q.reply_by ? ` · ${escapeHtml(q.reply_by)}` : ''} · <span class="tiny">${timeAgo(q.replied_at)}</span><br>${escapeHtml(q.reply)}</div>`
+      : '';
+    return `
     <li class="${q.answered ? 'answered' : ''}">
       <span class="slide-tag" data-go="${q.slide_idx}" title="Jump to slide">#${q.slide_idx + 1}</span>
-      <div class="text">${escapeHtml(q.text)}<div class="tiny">${timeAgo(q.created_at)}</div></div>
-      <label class="tiny row" style="flex:none"><input type="checkbox" data-answered="${q.id}" ${q.answered ? 'checked' : ''}> answered</label>
-    </li>`).join('') || '<li class="muted">No questions yet.</li>';
+      <div class="text">${escapeHtml(shown)}${original}<div class="tiny">${timeAgo(q.created_at)}</div>${reply}
+        <div class="reply-form ${openForms.has(String(q.id)) ? 'show' : ''}" data-form="${q.id}">
+          <textarea data-draft="${q.id}" placeholder="Type a reply. The student sees it on their phone, translated if needed.">${escapeHtml(drafts[q.id] || '')}</textarea>
+          <div class="row" style="margin-top:6px"><button class="btn-sm btn-primary" data-send-reply="${q.id}">Send reply</button><button class="btn-sm" data-cancel-reply="${q.id}">Cancel</button></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn-sm" data-reply="${q.id}">${q.reply ? 'Edit reply' : 'Reply'}</button>
+        <label class="tiny row"><input type="checkbox" data-answered="${q.id}" ${q.answered ? 'checked' : ''}> answered</label>
+      </div>
+    </li>`;
+  }).join('') || '<li class="muted">No questions yet.</li>';
 }
 
 async function goTo(idx) {
@@ -324,6 +348,37 @@ document.addEventListener('click', async (e) => {
   if (ans) {
     try { await api(`/api/sessions/${code}/questions/${ans.dataset.answered}`, { method: 'POST', body: { answered: ans.checked }, headers }); }
     catch (err) { toast(err.message); }
+  }
+  const open = e.target.closest('[data-reply]');
+  if (open) {
+    const form = $(`.reply-form[data-form="${open.dataset.reply}"]`);
+    const q = results.questions.find((x) => String(x.id) === open.dataset.reply);
+    const ta = form.querySelector('textarea');
+    if (!ta.value && q?.reply) ta.value = q.reply;
+    form.classList.add('show');
+    ta.focus();
+  }
+  const cancel = e.target.closest('[data-cancel-reply]');
+  if (cancel) $(`.reply-form[data-form="${cancel.dataset.cancelReply}"]`).classList.remove('show');
+  const send = e.target.closest('[data-send-reply]');
+  if (send) {
+    const form = $(`.reply-form[data-form="${send.dataset.sendReply}"]`);
+    const text = form.querySelector('textarea').value.trim();
+    if (!text) return toast('Type a reply first');
+    send.disabled = true;
+    try {
+      await api(`/api/sessions/${code}/questions/${send.dataset.sendReply}/reply`, { method: 'POST', body: { text, by: myName }, headers });
+      form.querySelector('textarea').value = '';
+      form.classList.remove('show');
+      toast('Reply sent to the student');
+    } catch (err) { toast(err.message, 3000); send.disabled = false; }
+  }
+});
+document.addEventListener('keydown', (e) => {
+  // Ctrl/Cmd+Enter inside a reply box sends it.
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && e.target.matches('.reply-form textarea')) {
+    e.preventDefault();
+    e.target.closest('.reply-form').querySelector('[data-send-reply]').click();
   }
 });
 document.addEventListener('keydown', (e) => {

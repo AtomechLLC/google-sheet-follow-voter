@@ -34,7 +34,8 @@
   .qbox.show { display: block; }
   .mine { list-style: none; padding: 0; margin: 0; }
   .mine li { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 6px; font-size: .95rem; white-space: pre-wrap; word-break: break-word; }
-  .mine li.answered::after { content: " · answered"; color: var(--text-3); font-size: .8rem; }
+  .mine li .reply { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--great-soft); color: var(--text); }
+  .mine li .reply b { display: block; font-size: .8rem; color: var(--great); margin-bottom: 2px; }
   .status-screen { text-align: center; padding: 48px 16px; }
   footer { text-align: center; }
   dialog#lang-dialog { border: 0; border-radius: 16px 16px 0 0; padding: 16px; width: 100%; max-width: 560px; margin: auto auto 0; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
@@ -89,6 +90,10 @@
         <button class="btn-primary" id="send" data-i18n="send">Send question</button>
         <button id="qclose" class="btn-sm" data-i18n="close">Close</button>
       </div>
+    </div>
+
+    <div class="card" id="mine-card" style="display:none">
+      <b data-i18n="yourQuestions">Your questions on this slide</b>
       <ul class="mine" id="mine"></ul>
     </div>
   </div>
@@ -150,6 +155,7 @@ $('#lang-grid').addEventListener('click', (e) => {
   renderLangPicker();
   applyStrings();
   render();
+  if (myQuestions.some((q) => q.reply)) refreshMine();
 });
 
 async function renderNotes() {
@@ -200,7 +206,7 @@ let myVotes = new Set();    // "idx:kind"
 let myQuestions = [];
 
 try {
-  const mine = await api(`/api/sessions/${code}/me?student=${me}`);
+  const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${lang}`);
   myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
   myQuestions = mine.questions;
 } catch (err) {
@@ -208,10 +214,26 @@ try {
   throw err;
 }
 
+async function refreshMine() {
+  try {
+    const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${lang}`);
+    myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
+    myQuestions = mine.questions;
+    render();
+  } catch {}
+}
+
 connectLive({
-  code, role: 'student',
+  code, role: 'student', student: me,
   onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
   onMessage: (msg) => {
+    if (msg.type === 'reply') {
+      const q = msg.question;
+      if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
+      toast(q && q.slide_idx !== viewing ? t(lang, 'repliedOn', { n: q.slide_idx + 1 }) : t(lang, 'replied'), 3500);
+      refreshMine();
+      return;
+    }
     if (msg.type !== 'session') return;
     const prev = session;
     session = msg.session;
@@ -247,7 +269,8 @@ function render() {
     b.setAttribute('aria-pressed', on);
   }
   const mine = myQuestions.filter((q) => q.slide_idx === viewing);
-  $('#mine').innerHTML = mine.map((q) => `<li class="${q.answered ? 'answered' : ''}">${escapeHtml(q.text)}</li>`).join('');
+  $('#mine-card').style.display = mine.length ? '' : 'none';
+  $('#mine').innerHTML = mine.map((q) => `<li>${escapeHtml(q.text)}${q.reply ? `<div class="reply"><b>${t(lang, 'teacherReply')}${q.reply_by ? ` · ${escapeHtml(q.reply_by)}` : ''}</b>${escapeHtml(q.reply_translated || q.reply)}</div>` : ''}</li>`).join('');
   renderNotes();
 }
 
@@ -299,7 +322,7 @@ $('#send').addEventListener('click', async () => {
   if (!text) return toast(t(lang, 'typeFirst'));
   $('#send').disabled = true;
   try {
-    const r = await api(`/api/sessions/${code}/question`, { method: 'POST', body: { studentId: me, slide: viewing, text } });
+    const r = await api(`/api/sessions/${code}/question`, { method: 'POST', body: { studentId: me, slide: viewing, text, lang } });
     myVotes = new Set(r.votes.map((v) => `${v.slide_idx}:${v.kind}`));
     myQuestions = r.questions;
     $('#qtext').value = '';
