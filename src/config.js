@@ -3,10 +3,32 @@ import crypto from 'node:crypto';
 
 const env = process.env;
 
+function normalizeBaseUrl(raw, port) {
+  let url = String(raw || '').trim();
+  if (!url) return `http://localhost:${port}`;
+  // Common paste mistake: "http://https://example.com" (a hosting form pre-filled "http://").
+  const doubled = url.match(/^https?:\/\/(https?:\/\/.+)$/i);
+  if (doubled) {
+    console.warn(`[config] BASE_URL "${url}" has two schemes; using "${doubled[1]}"`);
+    url = doubled[1];
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    console.warn(`[config] BASE_URL "${url}" has no scheme; assuming https://`);
+    url = `https://${url}`;
+  }
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, '')}`;
+  } catch {
+    console.warn(`[config] BASE_URL "${url}" is not a valid URL; falling back to http://localhost:${port}`);
+    return `http://localhost:${port}`;
+  }
+}
+
 export const config = {
   port: Number(env.PORT || 3000),
   // Public URL students will reach, e.g. https://feedback.example.com
-  baseUrl: (env.BASE_URL || `http://localhost:${env.PORT || 3000}`).replace(/\/$/, ''),
+  baseUrl: normalizeBaseUrl(env.BASE_URL, env.PORT || 3000),
   dataDir: path.resolve(env.DATA_DIR || 'data'),
   sessionSecret: env.SESSION_SECRET || '',
   google: {
