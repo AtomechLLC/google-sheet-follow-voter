@@ -89,7 +89,9 @@ the public https URL. WebSockets must be passed through (`/ws`); Caddy and most 
 
 Each slide's **speaker notes** are imported with the deck and shown on the student page under the
 slide. Students tap the flag button in the header and pick their language from a sheet of flags; the buttons and labels switch
-immediately, and the notes are translated on demand. Each translation is done once per slide and
+immediately, and the notes are translated on demand. A second flag button in the **Speaker notes**
+panel sets the reading language for notes and teacher replies separately (it follows the app
+language until a student picks one), for students who prefer English buttons but notes in their own language. Each translation is done once per slide and
 language and cached, so a 40-slide deck read in Romanian costs 40 short translations, total.
 
 Languages offered: English (original), Spanish, Chinese (Simplified), Hindi, Arabic, French,

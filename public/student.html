@@ -79,7 +79,13 @@
     </div>
 
     <div class="card" id="notes-card" style="display:none">
-      <div class="row spread"><b data-i18n="notes">Speaker notes</b><span class="tiny" id="notes-meta"></span></div>
+      <div class="row spread">
+        <b data-i18n="notes">Speaker notes</b>
+        <div class="row" style="gap:6px">
+          <span class="tiny" id="notes-meta"></span>
+          <button id="notes-lang-btn" class="btn-sm" aria-haspopup="dialog" title="Read notes in another language" style="gap:6px; padding:2px 8px; min-height:30px"><span id="notes-lang-flag" style="font-size:1.1rem; line-height:1">🌐</span><span id="notes-lang-code" class="tiny" style="font-weight:700"></span></button>
+        </div>
+      </div>
       <div id="notes-text" style="white-space:pre-wrap; word-break:break-word; margin-top:6px; font-size:.95rem"></div>
     </div>
 
@@ -115,9 +121,13 @@ import { t, STRINGS } from '/i18n.js';
 const code = codeFromPath();
 const me = studentId();
 const LANG_KEY = 'slidepulse.lang';
+const NOTES_LANG_KEY = 'slidepulse.notesLang';
 let lang = 'en';
+let notesLang = null; // explicit reading language for notes and replies; null = same as `lang`
 try { lang = localStorage.getItem(LANG_KEY) || (navigator.language || 'en').slice(0, 2).toLowerCase(); } catch {}
+try { notesLang = localStorage.getItem(NOTES_LANG_KEY) || null; } catch {}
 if (!STRINGS[lang]) lang = 'en';
+const readLang = () => notesLang || lang;
 const notesCache = new Map(); // "idx:lang" -> {text, translated, reason}
 let notesRequest = 0;
 
@@ -130,30 +140,48 @@ function applyStrings() {
   for (const el of $$('[data-i18n-placeholder]')) el.placeholder = t(lang, el.dataset.i18nPlaceholder);
 }
 
+let pickerMode = 'ui'; // 'ui' = app language, 'notes' = reading language for notes and replies
 function renderLangPicker() {
   const langs = session?.translation?.languages || [{ code: 'en', native: 'English', flag: '🇺🇸' }];
   if (!langs.find((l) => l.code === lang)) lang = session?.translation?.source || 'en';
+  if (notesLang && !langs.find((l) => l.code === notesLang)) notesLang = null;
   const current = langs.find((l) => l.code === lang);
   $('#lang-flag').textContent = current?.flag || '🌐';
   $('#lang-code').textContent = lang.toUpperCase();
   $('#lang-btn').title = current?.native || 'Language';
-  $('#lang-grid').innerHTML = langs.map((l) => `
-    <button type="button" data-lang="${l.code}" class="${l.code === lang ? 'active' : ''}" lang="${l.code}">
+  const reading = langs.find((l) => l.code === readLang());
+  $('#notes-lang-flag').textContent = reading?.flag || '🌐';
+  $('#notes-lang-code').textContent = readLang().toUpperCase();
+  $('#notes-lang-btn').title = reading?.native || '';
+
+  const selected = pickerMode === 'notes' ? readLang() : lang;
+  $('#lang-title').textContent = t(lang, pickerMode === 'notes' ? 'notesLanguage' : 'language');
+  const same = pickerMode === 'notes'
+    ? `<button type="button" data-lang="" class="${notesLang ? '' : 'active'}" style="grid-column: 1 / -1"><span class="flag" aria-hidden="true">${current?.flag || '🌐'}</span><span>${t(lang, 'sameAsApp')}</span></button>`
+    : '';
+  $('#lang-grid').innerHTML = same + langs.map((l) => `
+    <button type="button" data-lang="${l.code}" class="${l.code === selected && (pickerMode === 'ui' || notesLang) ? 'active' : ''}" lang="${l.code}">
       <span class="flag" aria-hidden="true">${l.flag || '🌐'}</span><span>${escapeHtml(l.native)}</span>
     </button>`).join('');
 }
 const dlg = $('#lang-dialog');
-$('#lang-btn').addEventListener('click', () => { renderLangPicker(); dlg.showModal(); });
+$('#lang-btn').addEventListener('click', () => { pickerMode = 'ui'; renderLangPicker(); dlg.showModal(); });
+$('#notes-lang-btn').addEventListener('click', () => { pickerMode = 'notes'; renderLangPicker(); dlg.showModal(); });
 $('#lang-close').addEventListener('click', () => dlg.close());
 dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
 $('#lang-grid').addEventListener('click', (e) => {
   const b = e.target.closest('[data-lang]');
   if (!b) return;
-  lang = b.dataset.lang;
-  try { localStorage.setItem(LANG_KEY, lang); } catch {}
   dlg.close();
+  if (pickerMode === 'notes') {
+    notesLang = b.dataset.lang || null;
+    try { notesLang ? localStorage.setItem(NOTES_LANG_KEY, notesLang) : localStorage.removeItem(NOTES_LANG_KEY); } catch {}
+  } else {
+    lang = b.dataset.lang;
+    try { localStorage.setItem(LANG_KEY, lang); } catch {}
+    applyStrings();
+  }
   renderLangPicker();
-  applyStrings();
   render();
   if (myQuestions.some((q) => q.reply)) refreshMine();
 });
@@ -172,19 +200,23 @@ async function renderNotes() {
   card.style.display = '';
   $('#notes-text').classList.remove('muted');
   const source = session.translation?.source || 'en';
-  if (lang === source || !session.translation?.enabled) {
+  const rl = readLang();
+  const rtl = Boolean(session.translation?.languages?.find((l) => l.code === rl)?.rtl);
+  $('#notes-text').dir = rtl ? 'rtl' : 'ltr';
+  $('#notes-text').lang = rl;
+  if (rl === source || !session.translation?.enabled) {
     $('#notes-meta').textContent = '';
     $('#notes-text').textContent = slide.notes;
     return;
   }
-  const key = `${viewing}:${lang}`;
+  const key = `${viewing}:${rl}`;
   const req = ++notesRequest;
   let entry = notesCache.get(key);
   if (!entry) {
     $('#notes-meta').textContent = t(lang, 'loading');
     $('#notes-text').textContent = slide.notes;
     try {
-      entry = await api(`/api/sessions/${code}/notes/${viewing}?lang=${lang}`);
+      entry = await api(`/api/sessions/${code}/notes/${viewing}?lang=${rl}`);
       notesCache.set(key, entry);
     } catch {
       entry = { text: slide.notes, translated: false, failed: true };
@@ -195,8 +227,8 @@ async function renderNotes() {
   $('#notes-meta').textContent = entry.translated ? t(lang, 'autoTranslated') : entry.failed ? t(lang, 'translateFailed') : (entry.reason || '');
   // Warm the next slide's translation so it is instant when the teacher advances.
   const next = viewing + 1;
-  if (session.slides[next]?.notes && !notesCache.has(`${next}:${lang}`)) {
-    api(`/api/sessions/${code}/notes/${next}?lang=${lang}`).then((e) => notesCache.set(`${next}:${lang}`, e)).catch(() => {});
+  if (session.slides[next]?.notes && !notesCache.has(`${next}:${rl}`)) {
+    api(`/api/sessions/${code}/notes/${next}?lang=${rl}`).then((e) => notesCache.set(`${next}:${rl}`, e)).catch(() => {});
   }
 }
 let session = null;
@@ -206,7 +238,7 @@ let myVotes = new Set();    // "idx:kind"
 let myQuestions = [];
 
 try {
-  const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${lang}`);
+  const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${readLang()}`);
   myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
   myQuestions = mine.questions;
 } catch (err) {
@@ -216,7 +248,7 @@ try {
 
 async function refreshMine() {
   try {
-    const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${lang}`);
+    const mine = await api(`/api/sessions/${code}/me?student=${me}&lang=${readLang()}`);
     myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
     myQuestions = mine.questions;
     render();
