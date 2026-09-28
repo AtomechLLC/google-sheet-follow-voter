@@ -103,6 +103,11 @@
             <div class="code" id="code"></div>
           </div>
         </div>
+        <details style="margin-top:12px" id="ext-help">
+          <summary class="tiny" style="cursor:pointer">Presenting from Google Slides? Let phones follow automatically</summary>
+          <p class="tiny" style="margin:8px 0">Install the <b>Slide Pulse Follower</b> Chrome extension (see README), open it and paste this dashboard link. Then present from Google Slides as usual.</p>
+          <button class="btn-sm" id="copy-dashboard">Copy dashboard link for the extension</button>
+        </details>
       </div>
 
       <div class="card">
@@ -144,6 +149,8 @@ $('#join-url').textContent = info.studentUrl.replace(/^https?:\/\//, '');
 $('#code').textContent = code;
 $('#present-link').href = info.presentUrl;
 $('#copy-student').addEventListener('click', () => copyText(info.studentUrl));
+$('#copy-dashboard').addEventListener('click', () => copyText(info.teacherUrl));
+if (!info.presentationId) $('#ext-help').style.display = 'none';
 
 connectLive({
   code, role: 'teacher', key,

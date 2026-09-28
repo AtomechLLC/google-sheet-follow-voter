@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 14px system-ui, sans-serif; width: 340px; margin: 0; padding: 14px; color: #111; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  p { margin: 0 0 10px; color: #444; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+  button { font: inherit; font-weight: 600; padding: 8px 12px; border-radius: 6px; border: 1px solid #2a78d6; background: #2a78d6; color: #fff; cursor: pointer; margin-top: 8px; }
+  button.link { background: none; border: 0; color: #d03b3b; padding: 2px 6px; margin: 0; font-weight: 500; }
+  ul { list-style: none; padding: 0; margin: 10px 0 0; }
+  li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e3e3e3; border-radius: 6px; margin-bottom: 6px; }
+  li b { display: block; font-size: 13px; }
+  li small { color: #666; }
+  .msg { margin-top: 8px; font-size: 13px; }
+  .msg.err { color: #d03b3b; }
+  .msg.ok { color: #0a7a2f; }
+  label { display: flex; gap: 6px; align-items: center; margin-top: 12px; color: #444; font-size: 13px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e1c; color: #f2f2f0; } p, label, li small { color: #c3c2b7; }
+    input[type=text] { background: #2a2a27; color: #f2f2f0; border-color: #444; } li { border-color: #444; }
+  }
+</style>
+</head>
+<body>
+  <h1>Slide Pulse Follower</h1>
+  <p>Paste the <b>dashboard link</b> of a presentation (the one with <code>?key=</code>). Then present from Google Slides as usual.</p>
+  <input type="text" id="link" placeholder="https://your-server/t/ABC123?key=…">
+  <button id="pair">Pair</button>
+  <div class="msg" id="msg"></div>
+  <ul id="list"></ul>
+  <label><input type="checkbox" id="editor"> Also follow while editing (not just in Present mode)</label>
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

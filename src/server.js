@@ -136,6 +136,7 @@ function sessionSummary(s) {
     statusMessage: s.status_message,
     slideCount: s.slide_count,
     currentSlide: s.current_slide,
+    presentationId: s.presentation_id,
     createdAt: s.created_at,
     studentUrl: studentUrl(s.code),
     teacherUrl: `${config.baseUrl}/t/${s.code}?key=${s.key}`,
@@ -225,6 +226,48 @@ app.post('/api/sessions/:code/questions/:id', loadSession, requireTeacher, (req,
 app.delete('/api/sessions/:code', loadSession, requireTeacher, (req, res) => {
   Sessions.remove(req.session.code);
   res.json({ ok: true });
+});
+
+// ---------- Chrome extension API (CORS-enabled; runs from the docs.google.com tab) ----------
+function cors(req, res, next) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'content-type, x-session-key');
+  res.set('Access-Control-Max-Age', '600');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+}
+app.use('/api/ext', cors);
+
+/** Pairing: the extension pastes a dashboard link, we return what it needs to store. */
+app.get('/api/ext/session/:code', loadSession, requireTeacher, (req, res) => {
+  const s = req.session;
+  res.json({
+    code: s.code,
+    title: s.title,
+    presentationId: s.presentation_id,
+    slideCount: s.slide_count,
+    currentSlide: s.current_slide,
+    demo: !s.presentation_id,
+  });
+});
+
+/** Follow: the extension reports the slide object id from the Slides URL. */
+app.post('/api/ext/session/:code/slide', loadSession, requireTeacher, (req, res) => {
+  const s = req.session;
+  const objectId = String(req.body?.objectId || '').trim();
+  const presentationId = String(req.body?.presentationId || '').trim();
+  if (!objectId) return res.status(400).json({ error: 'objectId required' });
+  if (s.presentation_id && presentationId && presentationId !== s.presentation_id) {
+    return res.status(409).json({ error: 'This tab is a different presentation than the paired session.' });
+  }
+  const slide = Sessions.slides(s.code).find((sl) => sl.object_id === objectId);
+  if (!slide) return res.status(404).json({ error: 'Slide not found in this session. Re-import the deck if you edited it.' });
+  if (slide.idx !== s.current_slide) {
+    Sessions.setCurrentSlide(s.code, slide.idx);
+    broadcastSession(s.code);
+  }
+  res.json({ index: slide.idx, slideCount: s.slide_count });
 });
 
 // ---------- student API ----------

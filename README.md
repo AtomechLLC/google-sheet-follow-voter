@@ -22,6 +22,7 @@ Votes are stored per anonymous device id (random, kept in the phone's local stor
 counts once per slide and can change their mind. "Great" and "Didn't understand" are mutually exclusive.
 
 Tech: Node.js (Express 5 + `ws`), SQLite (`better-sqlite3`), vanilla HTML/JS, no build step.
+An optional Chrome extension (`extension/`) lets phones follow Google Slides automatically.
 
 ## Run it locally
 
@@ -80,10 +81,32 @@ The container listens on port 3000 and keeps its data in the `slide-pulse-data` 
 Put it behind any HTTPS reverse proxy (Caddy, nginx, Fly.io, Railway, Render, …) and set `BASE_URL` to
 the public https URL. WebSockets must be passed through (`/ws`); Caddy and most platforms do this by default.
 
+## Chrome extension: phones follow Google Slides automatically
+
+Google offers no way for a website to know which slide you are presenting, so the dashboard's
+Prev/Next is the default. The `extension/` folder contains a small Chrome extension that removes
+that step: while you present in Google Slides, it watches the tab's URL (which carries the current
+slide's id) and tells the server. Student phones follow with no dashboard interaction.
+
+Install once (Chrome, Edge, Brave, or any Chromium browser):
+
+1. Open `chrome://extensions`, turn on **Developer mode** (top right).
+2. Click **Load unpacked** and choose the `extension/` folder from this repository.
+3. Pin the "Slide Pulse Follower" icon, click it, and paste a **dashboard link**
+   (the `/t/CODE?key=…` URL; there is a copy button on the dashboard under the QR code). Click **Pair**.
+   You can pair several presentations; the extension picks the right one by the deck being shown.
+4. Open your deck in Google Slides and press **Present**. A small blue badge in the corner confirms
+   each slide change ("Slide Pulse: slide 4 of 20"). A red badge means it could not reach the server
+   or the slide is unknown (re-import the deck on the dashboard after editing it).
+
+By default it only follows in Present mode; tick "Also follow while editing" in the popup if you
+prefer to present from the editor view. It only runs on `docs.google.com/presentation/*` pages and
+sends nothing but the slide id and your session key to your own server.
+
 ## During class
 
-- Open the dashboard on your laptop next to Google Slides. Advance with the **→** key in the dashboard
-  window (or click the thumbnails). Student phones follow automatically.
+- With the Chrome extension: just present from Google Slides; phones follow. Without it: keep the
+  dashboard open next to Google Slides and advance with the **→** key there (or click the thumbnails).
 - Students who fall behind or want to flag an earlier slide can tap ◀ on their phone; a
   "Back to live slide" button brings them back.
 - Open **Projected results** on the projector at the end (or any time) to discuss the slides that
