@@ -128,9 +128,10 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     const token = await accessTokenFor(teacher);
     const fields =
       'title,slides(objectId,pageElements(shape(text(textElements(textRun(content))))),' +
-      'slideProperties(notesPage(notesProperties(speakerNotesObjectId),pageElements(objectId,shape(text(textElements(textRun(content))))))))';
+      'slideProperties(isSkipped,notesPage(notesProperties(speakerNotesObjectId),pageElements(objectId,shape(text(textElements(textRun(content))))))))';
     const pres = await slidesGet(token, `${SLIDES_API}/${session.presentation_id}?fields=${encodeURIComponent(fields)}`);
-    const slides = pres.slides || [];
+    // Skipped slides are not shown in Present mode, so leave them out to keep numbering aligned.
+    const slides = (pres.slides || []).filter((s) => !s.slideProperties?.isSkipped);
     const title = pres.title || session.title;
 
     Sessions.setStatus(code, {

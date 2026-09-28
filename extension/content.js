@@ -12,6 +12,9 @@
   let slidesById = new Map(); // objectId -> idx, from the session state
   let slidesByIdx = new Map(); // idx -> objectId
   let navigating = null;      // { target, until } while we move the tab ourselves
+  let latestTarget = null;    // newest slide index the session asked for
+  let latestState = null;
+  let followTimer = null;
   let last = '';              // last "presentationId:objectId" we reported
   let inflight = false;
   let badge = null;
@@ -114,7 +117,11 @@
       if (msg.type !== 'session' || !msg.session) return;
       slidesById = new Map(msg.session.slides.map((sl) => [sl.objectId, sl.idx]));
       slidesByIdx = new Map(msg.session.slides.map((sl) => [sl.idx, sl.objectId]));
-      followServer(msg.session);
+      latestTarget = msg.session.currentSlide;
+      latestState = msg.session;
+      // Coalesce bursts (someone holding the arrow key): act once on the newest target.
+      clearTimeout(followTimer);
+      followTimer = setTimeout(followServer, 300);
     };
     ws.onclose = () => {
       if (socket !== ws) return;
@@ -124,50 +131,72 @@
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
 
-  function followServer(state) {
+  function followServer() {
+    if (latestTarget === null || inflight) return;
+    if (navigating && Date.now() < navigating.until) return; // finish the current move first; it re-checks when done
     const info = parseSlidesUrl(location.href);
-    if (!info?.objectId || inflight) return;
+    if (!info?.objectId) return;
     const here = slidesById.get(info.objectId);
-    const target = state.currentSlide;
+    const target = latestTarget;
     if (here === undefined || here === target) return;
-    if (navigating && navigating.target === target && Date.now() < navigating.until) return;
     const objectId = slidesByIdx.get(target);
     if (!objectId) return;
-    const who = state.changedBy ? `${state.changedBy} moved to` : 'Moving to';
+    const who = latestState?.changedBy ? `${latestState.changedBy} moved to` : 'Moving to';
     showBadge(`Slide Pulse: ${who} slide ${target + 1}`, true);
     last = `${info.presentationId}:${objectId}`; // don't report our own move back
     navigateTo(here, target, objectId, info);
   }
 
-  /** Try the keyboard first (no reload), verify, then fall back to loading the slide's URL. */
+  /**
+   * Move this tab to `objectId`. A one-slide step is done with the arrow key (no reload) and
+   * verified against the URL; anything else, or a step that doesn't take, loads the exact slide.
+   */
   function navigateTo(from, to, objectId, info) {
     const delta = to - from;
-    navigating = { target: to, until: Date.now() + 2500 };
+    navigating = { target: to, until: Date.now() + 4000 };
+    const done = () => {
+      navigating = null;
+      last = `${info.presentationId}:${objectId}`;
+      if (latestTarget !== to) followServer(); // the target moved on while we were busy
+    };
     const fallback = () => {
       const u = new URL(location.href);
       if (info.mode === 'present') u.searchParams.set('slide', `id.${objectId}`);
       else u.hash = `slide=id.${objectId}`;
       location.assign(u.toString());
     };
-    if (Math.abs(delta) > 6) return fallback();
+    if (Math.abs(delta) !== 1) return fallback();
     const key = delta > 0 ? 'ArrowRight' : 'ArrowLeft';
-    const targets = [document.activeElement, document, ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument; } catch { return null; } })].filter(Boolean);
-    let n = 0;
+    // One dispatch per document (it bubbles up to the document itself); same-origin iframes get their own.
+    const targets = [
+      document.activeElement || document.body,
+      ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument?.body; } catch { return null; } }),
+    ].filter(Boolean);
     const press = () => {
       for (const t of targets) {
         for (const type of ['keydown', 'keyup']) {
           t.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode: key === 'ArrowRight' ? 39 : 37, which: key === 'ArrowRight' ? 39 : 37, bubbles: true, cancelable: true }));
         }
       }
-      if (++n < Math.abs(delta)) setTimeout(press, 150);
-      else setTimeout(verify, 700);
     };
-    const verify = () => {
-      const now = parseSlidesUrl(location.href);
-      if (now?.objectId === objectId) { navigating = null; last = `${info.presentationId}:${objectId}`; return; }
-      fallback();
+    // Press, then poll the URL. A press that only played an animation step leaves the URL
+    // unchanged, so press again (a few times at most); a wrong slide means keys are unreliable.
+    let presses = 0;
+    const attempt = () => {
+      press();
+      presses++;
+      const started = Date.now();
+      const poll = () => {
+        const now = parseSlidesUrl(location.href)?.objectId;
+        if (now === objectId) return done();
+        if (now && slidesById.get(now) !== from) return fallback();
+        if (Date.now() - started < 900) return setTimeout(poll, 100);
+        if (presses < 4) return attempt();
+        fallback();
+      };
+      setTimeout(poll, 100);
     };
-    press();
+    attempt();
   }
 
   setInterval(tick, POLL_MS);
