@@ -1,0 +1,284 @@
+import http from 'node:http';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import QRCode from 'qrcode';
+import { config, googleConfigured } from './config.js';
+import { Teachers, Sessions, Votes, Questions, slidesDir } from './db.js';
+import {
+  authorizationUrl,
+  exchangeCode,
+  parsePresentationId,
+  importPresentation,
+  createDemoSlides,
+} from './google.js';
+import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults } from './live.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, '..', 'public');
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', true);
+app.use(express.json({ limit: '32kb' }));
+
+// ---------- tiny signed-cookie helpers ----------
+function sign(value) {
+  return crypto.createHmac('sha256', config.sessionSecret).update(value).digest('base64url');
+}
+function parseCookies(req) {
+  const out = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+function setSignedCookie(res, name, value, maxAgeSec) {
+  const secure = config.baseUrl.startsWith('https://') ? '; Secure' : '';
+  res.append(
+    'Set-Cookie',
+    `${name}=${encodeURIComponent(`${value}.${sign(value)}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure}`
+  );
+}
+function clearCookie(res, name) {
+  res.append('Set-Cookie', `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+function readSignedCookie(req, name) {
+  const raw = parseCookies(req)[name];
+  if (!raw) return null;
+  const i = raw.lastIndexOf('.');
+  if (i < 0) return null;
+  const value = raw.slice(0, i);
+  const sig = raw.slice(i + 1);
+  const expected = sign(value);
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return value;
+}
+
+function currentTeacher(req) {
+  const id = readSignedCookie(req, 'tid');
+  return id ? Teachers.get(id) : null;
+}
+
+// ---------- auth ----------
+app.get('/auth/google', (req, res) => {
+  if (!googleConfigured) return res.status(503).send('Google sign-in is not configured on this server.');
+  const state = crypto.randomBytes(16).toString('hex');
+  setSignedCookie(res, 'oauth_state', state, 600);
+  res.redirect(authorizationUrl(state));
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  const expected = readSignedCookie(req, 'oauth_state');
+  clearCookie(res, 'oauth_state');
+  if (error) return res.redirect(`/?error=${encodeURIComponent(String(error))}`);
+  if (!code || !state || state !== expected) return res.redirect('/?error=state_mismatch');
+  try {
+    const tokens = await exchangeCode(String(code));
+    const teacher = Teachers.create(tokens);
+    setSignedCookie(res, 'tid', teacher.id, 60 * 60 * 24 * 180);
+    res.redirect('/');
+  } catch (err) {
+    console.error('[oauth]', err);
+    res.redirect(`/?error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+app.post('/auth/logout', (req, res) => {
+  const t = currentTeacher(req);
+  if (t) Teachers.remove(t.id);
+  clearCookie(res, 'tid');
+  res.json({ ok: true });
+});
+
+// ---------- pages ----------
+const page = (file) => (req, res) => res.sendFile(path.join(publicDir, file));
+app.get('/', page('index.html'));
+app.get('/t/:code', page('teacher.html'));
+app.get('/s/:code', page('student.html'));
+app.get('/p/:code', page('present.html'));
+app.get('/join', (req, res) => {
+  const code = String(req.query.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  res.redirect(code ? `/s/${code}` : '/');
+});
+
+app.use('/slides', express.static(slidesDir, { maxAge: '365d', immutable: true, fallthrough: false }));
+app.use(express.static(publicDir, { maxAge: '1h' }));
+
+// ---------- helpers ----------
+const studentUrl = (code) => `${config.baseUrl}/s/${code}`;
+
+function loadSession(req, res, next) {
+  const code = String(req.params.code || '').toUpperCase();
+  const session = Sessions.get(code);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  req.session = session;
+  next();
+}
+
+/** Teacher-only routes: accept the session key (header or query) or the owner's cookie. */
+function requireTeacher(req, res, next) {
+  const key = req.get('x-session-key') || req.query.key;
+  const owner = currentTeacher(req);
+  if ((key && key === req.session.key) || (owner && owner.id === req.session.teacher_id)) return next();
+  res.status(403).json({ error: 'Not allowed' });
+}
+
+function sessionSummary(s) {
+  return {
+    code: s.code,
+    key: s.key,
+    title: s.title,
+    status: s.status,
+    statusMessage: s.status_message,
+    slideCount: s.slide_count,
+    currentSlide: s.current_slide,
+    createdAt: s.created_at,
+    studentUrl: studentUrl(s.code),
+    teacherUrl: `${config.baseUrl}/t/${s.code}?key=${s.key}`,
+    presentUrl: `${config.baseUrl}/p/${s.code}`,
+  };
+}
+
+const cleanStudentId = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v) ? v : null);
+
+// ---------- teacher API ----------
+app.get('/api/me', (req, res) => {
+  const t = currentTeacher(req);
+  res.json({
+    signedIn: Boolean(t),
+    googleConfigured,
+    demoMode: config.demoMode,
+    baseUrl: config.baseUrl,
+    sessions: t ? Sessions.listForTeacher(t.id).map(sessionSummary) : [],
+  });
+});
+
+app.post('/api/sessions', async (req, res) => {
+  const teacher = currentTeacher(req);
+  if (!teacher) return res.status(401).json({ error: 'Sign in with Google first' });
+  const presentationId = parsePresentationId(req.body?.url);
+  if (!presentationId) return res.status(400).json({ error: 'That does not look like a Google Slides link.' });
+  const session = Sessions.create({ teacherId: teacher.id, title: 'Importing…', presentationId });
+  res.status(201).json(sessionSummary(session));
+  importPresentation({ teacher, session, onProgress: () => broadcastSession(session.code) });
+});
+
+app.post('/api/demo', (req, res) => {
+  if (!config.demoMode) return res.status(404).json({ error: 'Demo mode is off' });
+  const teacher = currentTeacher(req);
+  const session = Sessions.create({ teacherId: teacher?.id, title: 'Demo deck', status: 'importing' });
+  createDemoSlides(session.code, 8);
+  res.status(201).json(sessionSummary(Sessions.get(session.code)));
+});
+
+app.get('/api/sessions/:code', loadSession, (req, res) => {
+  res.json(publicState(req.session.code));
+});
+
+app.get('/api/sessions/:code/qr.svg', loadSession, async (req, res) => {
+  const svg = await QRCode.toString(studentUrl(req.session.code), {
+    type: 'svg',
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 512,
+  });
+  res.type('image/svg+xml').send(svg);
+});
+
+app.get('/api/sessions/:code/teacher', loadSession, requireTeacher, (req, res) => {
+  res.json({ ...sessionSummary(req.session), results: resultsState(req.session.code) });
+});
+
+app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) => {
+  const s = req.session;
+  let idx = Number(req.body?.index);
+  if (!Number.isInteger(idx)) return res.status(400).json({ error: 'index must be an integer' });
+  idx = Math.max(0, Math.min(Math.max(s.slide_count - 1, 0), idx));
+  Sessions.setCurrentSlide(s.code, idx);
+  broadcastSession(s.code);
+  res.json({ currentSlide: idx });
+});
+
+app.post('/api/sessions/:code/reimport', loadSession, requireTeacher, (req, res) => {
+  const s = req.session;
+  if (!s.presentation_id) return res.status(400).json({ error: 'Demo sessions cannot be re-imported' });
+  const teacher = Teachers.get(s.teacher_id);
+  if (!teacher) return res.status(400).json({ error: 'The Google account that created this session is signed out.' });
+  if (s.status === 'importing') return res.json({ ok: true });
+  Sessions.setStatus(s.code, { status: 'importing', message: 'Re-importing…' });
+  broadcastSession(s.code);
+  res.json({ ok: true });
+  importPresentation({ teacher, session: s, onProgress: () => broadcastSession(s.code) });
+});
+
+app.post('/api/sessions/:code/questions/:id', loadSession, requireTeacher, (req, res) => {
+  const id = Number(req.params.id);
+  Questions.setAnswered(req.session.code, id, Boolean(req.body?.answered));
+  broadcastResults(req.session.code);
+  res.json({ ok: true });
+});
+
+app.delete('/api/sessions/:code', loadSession, requireTeacher, (req, res) => {
+  Sessions.remove(req.session.code);
+  res.json({ ok: true });
+});
+
+// ---------- student API ----------
+app.get('/api/sessions/:code/me', loadSession, (req, res) => {
+  const studentId = cleanStudentId(req.query.student);
+  if (!studentId) return res.status(400).json({ error: 'bad student id' });
+  res.json({
+    votes: Votes.forStudent(req.session.code, studentId),
+    questions: Questions.forStudent(req.session.code, studentId),
+  });
+});
+
+app.post('/api/sessions/:code/vote', loadSession, (req, res) => {
+  const s = req.session;
+  const studentId = cleanStudentId(req.body?.studentId);
+  const slide = Number(req.body?.slide);
+  const kind = req.body?.kind;
+  if (!studentId) return res.status(400).json({ error: 'bad student id' });
+  if (!Number.isInteger(slide) || slide < 0 || slide >= Math.max(s.slide_count, 1)) {
+    return res.status(400).json({ error: 'bad slide index' });
+  }
+  if (!['great', 'confused', 'question'].includes(kind)) return res.status(400).json({ error: 'bad kind' });
+  const active = Votes.toggle(s.code, slide, studentId, kind);
+  broadcastResults(s.code);
+  res.json({ active, votes: Votes.forStudent(s.code, studentId) });
+});
+
+app.post('/api/sessions/:code/question', loadSession, (req, res) => {
+  const s = req.session;
+  const studentId = cleanStudentId(req.body?.studentId);
+  const slide = Number(req.body?.slide);
+  const text = String(req.body?.text || '').trim().slice(0, 500);
+  if (!studentId) return res.status(400).json({ error: 'bad student id' });
+  if (!Number.isInteger(slide) || slide < 0 || slide >= Math.max(s.slide_count, 1)) {
+    return res.status(400).json({ error: 'bad slide index' });
+  }
+  if (!text) return res.status(400).json({ error: 'Question text is empty' });
+  Votes.ensure(s.code, slide, studentId, 'question');
+  const id = Questions.add(s.code, slide, studentId, text);
+  broadcastResults(s.code);
+  res.status(201).json({ id, votes: Votes.forStudent(s.code, studentId), questions: Questions.forStudent(s.code, studentId) });
+});
+
+// ---------- errors ----------
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  console.error(err);
+  res.status(err.status || 500).json({ error: err.message || 'Server error' });
+});
+
+const server = http.createServer(app);
+attachWebSocket(server);
+server.listen(config.port, () => {
+  console.log(`Slide Pulse listening on ${config.baseUrl} (port ${config.port})`);
+  if (!googleConfigured) console.warn('[google] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set: Google Slides import is disabled.');
+  if (config.demoMode) console.log('[demo] DEMO_MODE is on: /api/demo creates placeholder sessions.');
+});

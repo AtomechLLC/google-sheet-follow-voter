@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a78d6">
+<title>Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { display: flex; flex-direction: column; min-height: 100dvh; }
+  .wrap { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  header h1 { font-size: 1.05rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .nav .pos { font-weight: 700; }
+  .follow { display: none; }
+  .follow.show { display: inline-flex; }
+  .votes { display: grid; gap: 10px; }
+  .vote {
+    width: 100%; min-height: 64px; font-size: 1.1rem; justify-content: flex-start; padding: 12px 16px;
+    border-width: 2px; border-radius: 14px;
+  }
+  .vote .ico { font-size: 1.5rem; width: 36px; text-align: center; }
+  .vote .check { margin-left: auto; opacity: 0; transition: opacity .12s; }
+  .vote.active .check { opacity: 1; }
+  .vote.great { border-color: var(--great); }
+  .vote.great.active { background: var(--great-soft); color: var(--great); }
+  .vote.confused { border-color: var(--confused); }
+  .vote.confused.active { background: var(--confused-soft); color: var(--confused); }
+  .vote.question { border-color: var(--question); }
+  .vote.question.active { background: var(--question-soft); color: var(--question); }
+  .qbox { display: none; }
+  .qbox.show { display: block; }
+  .mine { list-style: none; padding: 0; margin: 0; }
+  .mine li { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 6px; font-size: .95rem; white-space: pre-wrap; word-break: break-word; }
+  .mine li.answered::after { content: " · answered"; color: var(--text-3); font-size: .8rem; }
+  .status-screen { text-align: center; padding: 48px 16px; }
+  footer { text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">Connecting…</h1>
+    <span id="conn" class="pill">…</span>
+  </header>
+
+  <div id="importing" class="card status-screen" style="display:none">
+    <h2>Getting the slides ready…</h2>
+    <p class="muted" id="importing-msg"></p>
+  </div>
+
+  <div id="main" class="stack" style="display:none">
+    <div class="slide-frame" id="frame"></div>
+    <div class="nav">
+      <button id="prev" class="btn-icon" aria-label="Previous slide">◀</button>
+      <div style="text-align:center">
+        <div class="pos" id="pos"></div>
+        <button id="follow" class="btn-sm follow">↩ Back to live slide</button>
+      </div>
+      <button id="next" class="btn-icon" aria-label="Next slide">▶</button>
+    </div>
+
+    <div class="votes" role="group" aria-label="Feedback for this slide">
+      <button class="vote great" data-kind="great"><span class="ico">👍</span> This slide is great! <span class="check">✓</span></button>
+      <button class="vote confused" data-kind="confused"><span class="ico">🤔</span> I didn't understand <span class="check">✓</span></button>
+      <button class="vote question" data-kind="question"><span class="ico">❓</span> I have a question <span class="check">✓</span></button>
+    </div>
+
+    <div class="card qbox" id="qbox">
+      <label for="qtext"><b>Your question</b> <span class="tiny">(anonymous, optional)</span></label>
+      <textarea id="qtext" maxlength="500" placeholder="What would you like explained?"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn-primary" id="send">Send question</button>
+        <button id="qclose" class="btn-sm">Close</button>
+      </div>
+      <ul class="mine" id="mine"></ul>
+    </div>
+  </div>
+
+  <footer class="tiny">Your answers are anonymous. Nobody sees who tapped what.</footer>
+</div>
+
+<script type="module">
+import { $, $$, api, toast, connectLive, codeFromPath, escapeHtml, studentId } from '/common.js';
+
+const code = codeFromPath();
+const me = studentId();
+let session = null;
+let viewing = null;         // slide index shown on this phone
+let following = true;       // auto-advance with the teacher
+let myVotes = new Set();    // "idx:kind"
+let myQuestions = [];
+
+try {
+  const mine = await api(`/api/sessions/${code}/me?student=${me}`);
+  myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
+  myQuestions = mine.questions;
+} catch (err) {
+  document.body.innerHTML = `<div class="wrap"><div class="card status-screen"><h1>Session not found</h1><p class="muted">Check the link or QR code with your teacher.</p></div></div>`;
+  throw err;
+}
+
+connectLive({
+  code, role: 'student',
+  onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
+  onMessage: (msg) => {
+    if (msg.type !== 'session') return;
+    const prev = session;
+    session = msg.session;
+    if (viewing === null || following || (prev && prev.currentSlide !== session.currentSlide && viewing === prev.currentSlide)) {
+      viewing = session.currentSlide;
+      following = true;
+    }
+    render();
+  },
+});
+
+function render() {
+  document.title = `${session.title} · Slide Pulse`;
+  $('#title').textContent = session.title;
+  const ready = session.slideCount > 0;
+  $('#importing').style.display = ready ? 'none' : '';
+  $('#importing-msg').textContent = session.status === 'error' ? 'The teacher needs to fix the import.' : (session.statusMessage || '');
+  $('#main').style.display = ready ? '' : 'none';
+  if (!ready) return;
+
+  viewing = Math.max(0, Math.min(session.slideCount - 1, viewing));
+  const slide = session.slides[viewing];
+  $('#frame').innerHTML = slide?.image ? `<img src="${slide.image}" alt="Slide ${viewing + 1}">` : '<span>Slide image loading…</span>';
+  $('#pos').textContent = `Slide ${viewing + 1} of ${session.slideCount}`;
+  $('#prev').disabled = viewing <= 0;
+  $('#next').disabled = viewing >= session.slideCount - 1;
+  $('#follow').classList.toggle('show', viewing !== session.currentSlide);
+  for (const b of $$('.vote')) {
+    const on = myVotes.has(`${viewing}:${b.dataset.kind}`);
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on);
+  }
+  const mine = myQuestions.filter((q) => q.slide_idx === viewing);
+  $('#mine').innerHTML = mine.map((q) => `<li class="${q.answered ? 'answered' : ''}">${escapeHtml(q.text)}</li>`).join('');
+}
+
+function show(idx, follow = false) {
+  viewing = idx;
+  following = follow || idx === session.currentSlide;
+  $('#qbox').classList.remove('show');
+  render();
+}
+$('#prev').addEventListener('click', () => show(viewing - 1));
+$('#next').addEventListener('click', () => show(viewing + 1));
+$('#follow').addEventListener('click', () => show(session.currentSlide, true));
+
+async function vote(kind) {
+  const slide = viewing;
+  try {
+    const r = await api(`/api/sessions/${code}/vote`, { method: 'POST', body: { studentId: me, slide, kind } });
+    myVotes = new Set(r.votes.map((v) => `${v.slide_idx}:${v.kind}`));
+    render();
+    if (r.active) {
+      if (navigator.vibrate) navigator.vibrate(15);
+      toast({ great: 'Thanks! 👍', confused: 'Got it. Your teacher will see this.', question: 'Flagged. Add details below if you like.' }[kind]);
+    } else toast('Removed');
+    return r.active;
+  } catch (err) { toast(err.message, 3000); }
+}
+
+for (const b of $$('.vote')) {
+  b.addEventListener('click', async () => {
+    const kind = b.dataset.kind;
+    if (kind === 'question') {
+      const box = $('#qbox');
+      if (!myVotes.has(`${viewing}:question`)) {
+        const active = await vote('question');
+        if (active) { box.classList.add('show'); $('#qtext').focus(); }
+      } else {
+        box.classList.toggle('show');
+        if (box.classList.contains('show')) $('#qtext').focus();
+      }
+      return;
+    }
+    vote(kind);
+  });
+}
+
+$('#qclose').addEventListener('click', () => $('#qbox').classList.remove('show'));
+$('#send').addEventListener('click', async () => {
+  const text = $('#qtext').value.trim();
+  if (!text) return toast('Type your question first');
+  $('#send').disabled = true;
+  try {
+    const r = await api(`/api/sessions/${code}/question`, { method: 'POST', body: { studentId: me, slide: viewing, text } });
+    myVotes = new Set(r.votes.map((v) => `${v.slide_idx}:${v.kind}`));
+    myQuestions = r.questions;
+    $('#qtext').value = '';
+    toast('Question sent');
+    render();
+  } catch (err) { toast(err.message, 3000); }
+  finally { $('#send').disabled = false; }
+});
+</script>
+</body>
+</html>

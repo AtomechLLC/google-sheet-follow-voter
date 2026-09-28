@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .hero { padding: 32px 0 8px; }
+  .hero h1 { font-size: 2rem; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .step { padding: 12px; border-radius: 10px; background: var(--surface-2); }
+  .step b { display: block; margin-bottom: 4px; }
+  .session-list { list-style: none; margin: 0; padding: 0; }
+  .session-list li { padding: 12px 0; border-top: 1px solid var(--border); }
+  .session-list li:first-child { border-top: 0; }
+</style>
+</head>
+<body>
+<div class="container narrow stack">
+  <div class="hero">
+    <h1>Slide Pulse</h1>
+    <p class="muted">Live, anonymous feedback on every slide. Students scan a QR code and tap
+      <b>This slide is great</b>, <b>I didn't understand</b>, or <b>I have a question</b>.
+      You see which slides need another pass, without anyone raising a hand.</p>
+  </div>
+
+  <div class="steps">
+    <div class="step"><b>1. Sign in</b><span class="muted">with the Google account that can open your deck.</span></div>
+    <div class="step"><b>2. Paste the link</b><span class="muted">to your Google Slides. We fetch a picture of every slide.</span></div>
+    <div class="step"><b>3. Present</b><span class="muted">Show the QR code, then advance slides from the dashboard.</span></div>
+  </div>
+
+  <div id="error" class="card" style="display:none; border-color: var(--danger)"></div>
+
+  <div id="signed-out" class="card stack" style="display:none">
+    <h2>Get started</h2>
+    <p class="muted" id="google-note">Sign in with Google to import a private Google Slides deck.</p>
+    <div class="row">
+      <a id="signin" class="btn btn-primary" href="/auth/google">Sign in with Google</a>
+      <button id="demo-out" style="display:none">Try a demo deck</button>
+    </div>
+  </div>
+
+  <div id="signed-in" class="card stack" style="display:none">
+    <div class="row spread">
+      <h2 style="margin:0">New presentation</h2>
+      <button id="logout" class="btn-sm">Sign out</button>
+    </div>
+    <form id="create" class="stack">
+      <label for="url" class="muted">Google Slides link</label>
+      <input id="url" type="url" placeholder="https://docs.google.com/presentation/d/…/edit" required autocomplete="off">
+      <div class="row">
+        <button class="btn-primary" type="submit" id="create-btn">Import slides</button>
+        <button id="demo-in" type="button" style="display:none">Try a demo deck</button>
+      </div>
+      <p class="tiny">Only read access to your presentations is requested. Slide images are stored on this server so students can view them without signing in.</p>
+    </form>
+  </div>
+
+  <div id="sessions-card" class="card stack" style="display:none">
+    <h2>Your presentations</h2>
+    <ul class="session-list" id="sessions"></ul>
+  </div>
+</div>
+
+<script type="module">
+import { $, api, toast, escapeHtml, copyText } from '/common.js';
+
+const params = new URLSearchParams(location.search);
+if (params.get('error')) {
+  const el = $('#error');
+  el.style.display = '';
+  el.textContent = `Sign-in failed: ${params.get('error')}`;
+}
+
+const me = await api('/api/me');
+
+if (!me.signedIn) {
+  $('#signed-out').style.display = '';
+  if (!me.googleConfigured) {
+    $('#signin').classList.add('disabled');
+    $('#signin').setAttribute('aria-disabled', 'true');
+    $('#signin').addEventListener('click', (e) => e.preventDefault());
+    $('#google-note').textContent = 'Google sign-in is not configured on this server yet. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README).';
+  }
+  if (me.demoMode) $('#demo-out').style.display = '';
+} else {
+  $('#signed-in').style.display = '';
+  if (me.demoMode) $('#demo-in').style.display = '';
+  renderSessions(me.sessions);
+}
+
+function renderSessions(sessions) {
+  if (!sessions.length) return;
+  $('#sessions-card').style.display = '';
+  $('#sessions').innerHTML = sessions.map((s) => `
+    <li class="row spread">
+      <div class="grow">
+        <div><b>${escapeHtml(s.title)}</b> <span class="pill">${s.code}</span>
+          ${s.status === 'importing' ? '<span class="pill warn">importing</span>' : ''}
+          ${s.status === 'error' ? `<span class="pill err" title="${escapeHtml(s.statusMessage || '')}">import failed</span>` : ''}
+        </div>
+        <div class="tiny">${s.slideCount} slides · ${new Date(s.createdAt).toLocaleString()}</div>
+      </div>
+      <div class="row">
+        <a class="btn btn-sm btn-primary" href="/t/${s.code}?key=${encodeURIComponent(s.key)}">Open dashboard</a>
+        <button class="btn-sm" data-copy="${escapeHtml(s.studentUrl)}">Copy student link</button>
+        <button class="btn-sm btn-danger" data-delete="${s.code}" data-key="${escapeHtml(s.key)}">Delete</button>
+      </div>
+    </li>`).join('');
+  $('#sessions').addEventListener('click', async (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (copy) return copyText(copy.dataset.copy);
+    const del = e.target.closest('[data-delete]');
+    if (del && confirm('Delete this presentation and all its feedback?')) {
+      await api(`/api/sessions/${del.dataset.delete}`, { method: 'DELETE', headers: { 'x-session-key': del.dataset.key } });
+      location.reload();
+    }
+  });
+}
+
+$('#create')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#create-btn');
+  btn.disabled = true;
+  try {
+    const s = await api('/api/sessions', { method: 'POST', body: { url: $('#url').value } });
+    location.href = `/t/${s.code}?key=${encodeURIComponent(s.key)}`;
+  } catch (err) {
+    toast(err.message, 4000);
+    btn.disabled = false;
+  }
+});
+
+for (const id of ['#demo-in', '#demo-out']) {
+  $(id)?.addEventListener('click', async () => {
+    try {
+      const s = await api('/api/demo', { method: 'POST' });
+      location.href = `/t/${s.code}?key=${encodeURIComponent(s.key)}`;
+    } catch (err) { toast(err.message, 4000); }
+  });
+}
+
+$('#logout')?.addEventListener('click', async () => {
+  await api('/auth/logout', { method: 'POST' });
+  location.reload();
+});
+</script>
+</body>
+</html>

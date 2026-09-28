@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results · Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { padding: 24px; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .head h1 { font-size: 2rem; }
+  .join { display: flex; align-items: center; gap: 12px; }
+  .join img { width: 120px; height: 120px; background: #fff; border-radius: 8px; border: 1px solid var(--border); }
+  .join .url { font-size: 1.3rem; font-weight: 800; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 16px 0 8px; font-weight: 600; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chart { display: grid; grid-template-columns: 56px 1fr 64px; row-gap: 6px; column-gap: 10px; align-items: center; font-size: 1.05rem; }
+  .chart .lbl { text-align: right; font-weight: 700; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .chart .track { position: relative; height: 26px; background: var(--surface-2); border-radius: 4px; }
+  .chart .seg { position: absolute; top: 0; bottom: 0; border-right: 2px solid var(--bg); }
+  .chart .seg:last-child { border-right: 0; border-radius: 0 4px 4px 0; }
+  .chart .tot { font-variant-numeric: tabular-nums; color: var(--text-2); font-weight: 600; }
+  .chart .row-current .lbl { color: var(--accent); }
+  .chart .row-current .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 20px; }
+  .hero-n { font-size: 2.6rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .qs { margin-top: 20px; display: none; }
+  .qs.show { display: block; }
+  .qs ul { list-style: none; padding: 0; margin: 0; columns: 2; column-gap: 20px; }
+  @media (max-width: 800px) { .qs ul { columns: 1; } }
+  .qs li { break-inside: avoid; padding: 8px 12px; margin-bottom: 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 1.05rem; }
+  .qs li b { color: var(--question); margin-right: 8px; }
+  .qs li.answered { opacity: .5; text-decoration: line-through; }
+  .controls { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="head">
+  <div>
+    <h1 id="title">Loading…</h1>
+    <div class="row muted"><span id="participants"></span><span id="conn" class="pill"></span></div>
+    <div class="controls" style="margin-top:8px">
+      <label class="row tiny"><input type="checkbox" id="show-q"> Show questions</label>
+      <label class="row tiny"><input type="checkbox" id="attention"> Sort by attention</label>
+    </div>
+  </div>
+  <div class="join">
+    <img id="qr" alt="QR code to join">
+    <div><div class="tiny">Join at</div><div class="url" id="join-url"></div><div class="tiny">Code <b id="code"></b></div></div>
+  </div>
+</div>
+
+<div class="legend" aria-hidden="true">
+  <span><i class="dot great"></i>👍 Great</span>
+  <span><i class="dot confused"></i>🤔 Didn't understand</span>
+  <span><i class="dot question"></i>❓ Questions</span>
+</div>
+<div class="chart" id="chart" role="table" aria-label="Feedback per slide"></div>
+
+<div class="summary">
+  <div class="card"><div class="hero-n" id="top-confused">–</div><div class="muted">Slide most often marked “didn't understand”</div></div>
+  <div class="card"><div class="hero-n" id="top-question">–</div><div class="muted">Slide with the most questions</div></div>
+  <div class="card"><div class="hero-n" id="top-great">–</div><div class="muted">Slide most often marked great</div></div>
+</div>
+
+<div class="qs card" id="qs"><h2>Questions</h2><ul id="qlist"></ul></div>
+
+<script type="module">
+import { $, api, connectLive, codeFromPath, escapeHtml } from '/common.js';
+
+const code = codeFromPath();
+let session = null;
+let results = { counts: {}, participants: 0, questions: [] };
+
+const s0 = await api(`/api/sessions/${code}`);
+$('#qr').src = `/api/sessions/${code}/qr.svg`;
+$('#join-url').textContent = `${location.host}/s/${code}`;
+$('#code').textContent = code;
+
+connectLive({
+  code, role: 'present',
+  onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting…'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
+  onMessage: (msg) => {
+    if (msg.type === 'session') session = msg.session;
+    if (msg.type === 'results') results = msg.results;
+    render();
+  },
+});
+$('#show-q').addEventListener('change', render);
+$('#attention').addEventListener('change', render);
+
+function render() {
+  if (!session) return;
+  $('#title').textContent = session.title;
+  document.title = `${session.title} · Results`;
+  $('#participants').textContent = `${results.participants} student${results.participants === 1 ? '' : 's'} responded`;
+
+  const rows = session.slides.map((s) => ({ idx: s.idx, title: s.title, ...(results.counts[s.idx] || { great: 0, confused: 0, question: 0 }) }));
+  const max = Math.max(1, ...rows.map((r) => r.great + r.confused + r.question));
+  const sorted = [...rows];
+  if ($('#attention').checked) sorted.sort((a, b) => (b.confused + b.question) - (a.confused + a.question) || a.idx - b.idx);
+
+  const seg = (v, offset, cls) => v ? `<span class="seg ${cls}" style="left:${offset / max * 100}%;width:${v / max * 100}%;background:var(--${cls})" title="${v}"></span>` : '';
+  $('#chart').innerHTML = sorted.map((r) => `
+    <div class="${r.idx === session.currentSlide ? 'row-current' : ''}" role="row" style="display:contents">
+      <div class="lbl" title="${escapeHtml(r.title || '')}">#${r.idx + 1}</div>
+      <div class="track" aria-label="Slide ${r.idx + 1}: ${r.great} great, ${r.confused} didn't understand, ${r.question} questions">
+        ${seg(r.great, 0, 'great')}${seg(r.confused, r.great, 'confused')}${seg(r.question, r.great + r.confused, 'question')}
+      </div>
+      <div class="tot">${r.great + r.confused + r.question || ''}</div>
+    </div>`).join('');
+
+  const top = (k) => { const best = rows.reduce((a, b) => (b[k] > (a?.[k] ?? 0) ? b : a), null); return best && best[k] > 0 ? `#${best.idx + 1} · ${best[k]}` : '–'; };
+  $('#top-confused').textContent = top('confused');
+  $('#top-question').textContent = top('question');
+  $('#top-great').textContent = top('great');
+
+  $('#qs').classList.toggle('show', $('#show-q').checked);
+  $('#qlist').innerHTML = results.questions.map((q) => `<li class="${q.answered ? 'answered' : ''}"><b>#${q.slide_idx + 1}</b>${escapeHtml(q.text)}</li>`).join('') || '<li class="muted">No questions yet.</li>';
+}
+</script>
+</body>
+</html>

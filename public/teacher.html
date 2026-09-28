@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .topbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 8px 0 12px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .nav .pos { font-weight: 700; font-size: 1.05rem; }
+  .qr { display: grid; grid-template-columns: 140px 1fr; gap: 14px; align-items: center; }
+  .qr img { width: 140px; height: 140px; border-radius: 8px; background: #fff; border: 1px solid var(--border); }
+  .qr .url { font-size: 1.15rem; font-weight: 700; word-break: break-all; }
+  .qr .code { font-size: 1.6rem; letter-spacing: .12em; font-weight: 800; }
+  .live-counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { border-radius: 10px; padding: 10px 12px; border: 1px solid var(--border); }
+  .stat .n { font-size: 1.7rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: .8rem; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+  .stat.great { background: var(--great-soft); }
+  .stat.confused { background: var(--confused-soft); }
+  .stat.question { background: var(--question-soft); }
+  .bar { position: relative; height: 10px; background: var(--surface-2); border-radius: 4px; overflow: hidden; min-width: 80px; }
+  .bar span { position: absolute; top: 0; bottom: 0; }
+  .qlist { list-style: none; margin: 0; padding: 0; }
+  .qlist li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+  .qlist li:first-child { border-top: 0; }
+  .qlist li.answered { opacity: .55; }
+  .qlist .slide-tag { flex: none; min-width: 48px; text-align: center; font-weight: 700; border-radius: 8px; padding: 4px 6px; background: var(--question-soft); color: var(--question); cursor: pointer; }
+  .qlist .text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  .kbd { font-family: ui-monospace, monospace; font-size: .75rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--text-2); }
+  .thumbs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 4px; scroll-snap-type: x proximity; }
+  .thumbs button { flex: none; padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; min-height: 0; position: relative; }
+  .thumbs button.current { border-color: var(--accent); }
+  .thumbs img { display: block; width: 96px; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px; background: #fff; }
+  .thumbs .badge { position: absolute; right: 2px; top: 2px; font-size: .7rem; font-weight: 700; background: var(--confused); color: #fff; border-radius: 999px; padding: 0 5px; }
+  .thumbs .n { position: absolute; left: 4px; bottom: 2px; font-size: .7rem; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000; }
+  #status-banner { display: none; }
+</style>
+</head>
+<body>
+<div class="container stack">
+  <div class="topbar">
+    <div>
+      <h1 id="title" style="margin:0">Loading…</h1>
+      <div class="tiny row">
+        <span id="conn" class="pill">connecting</span>
+        <span id="participants" class="pill">0 students</span>
+        <span>Keys: <span class="kbd">←</span> <span class="kbd">→</span> change slide</span>
+      </div>
+    </div>
+    <div class="row">
+      <a id="present-link" class="btn btn-sm" target="_blank" rel="noopener">Projected results ↗</a>
+      <button id="copy-student" class="btn-sm">Copy student link</button>
+      <button id="reimport" class="btn-sm" title="Fetch the slides again after you edit the deck">Re-import slides</button>
+      <a class="btn btn-sm" href="/">All presentations</a>
+    </div>
+  </div>
+
+  <div id="status-banner" class="card"></div>
+
+  <div class="grid">
+    <div class="stack">
+      <div class="card">
+        <div class="slide-frame" id="frame"><span>No slide</span></div>
+        <div class="nav">
+          <button id="prev" class="btn-icon" aria-label="Previous slide">◀</button>
+          <div style="text-align:center">
+            <div class="pos" id="pos">–</div>
+            <div class="tiny" id="slide-title"></div>
+          </div>
+          <button id="next" class="btn-icon" aria-label="Next slide">▶</button>
+        </div>
+        <div class="live-counts" aria-live="polite">
+          <div class="stat great"><div class="n" id="c-great">0</div><div class="l"><span class="dot great"></span>Great</div></div>
+          <div class="stat confused"><div class="n" id="c-confused">0</div><div class="l"><span class="dot confused"></span>Didn't understand</div></div>
+          <div class="stat question"><div class="n" id="c-question">0</div><div class="l"><span class="dot question"></span>Questions</div></div>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+
+      <div class="card">
+        <div class="row spread">
+          <h2 style="margin:0">Questions <span id="q-count" class="pill"></span></h2>
+          <label class="row tiny"><input type="checkbox" id="q-current"> This slide only</label>
+        </div>
+        <ul class="qlist" id="questions"><li class="muted">No questions yet.</li></ul>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card">
+        <h2>Students join here</h2>
+        <div class="qr">
+          <img id="qr" alt="QR code for the student link">
+          <div>
+            <div class="tiny">Scan, or go to</div>
+            <div class="url" id="join-url"></div>
+            <div class="tiny" style="margin-top:6px">Code</div>
+            <div class="code" id="code"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row spread">
+          <h2 style="margin:0">Slides</h2>
+          <select id="sort" class="btn-sm" style="width:auto">
+            <option value="attention">Needs attention first</option>
+            <option value="order">Slide order</option>
+          </select>
+        </div>
+        <table id="table">
+          <thead><tr><th>#</th><th>Title</th><th class="num" title="This slide is great">👍</th><th class="num" title="I didn't understand">🤔</th><th class="num" title="Questions">❓</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { $, $$, api, toast, connectLive, codeFromPath, escapeHtml, timeAgo, copyText } from '/common.js';
+
+const code = codeFromPath();
+const key = new URLSearchParams(location.search).get('key') || '';
+const headers = { 'x-session-key': key };
+
+let session = null;   // public state
+let results = { counts: {}, participants: 0, questions: [] };
+let info = null;      // sessionSummary with urls
+
+try {
+  info = await api(`/api/sessions/${code}/teacher`, { headers });
+} catch (err) {
+  document.body.innerHTML = `<div class="container narrow"><div class="card"><h1>Can't open dashboard</h1><p>${escapeHtml(err.message)}</p><p><a href="/">Back to your presentations</a></p></div></div>`;
+  throw err;
+}
+$('#qr').src = `/api/sessions/${code}/qr.svg`;
+$('#join-url').textContent = info.studentUrl.replace(/^https?:\/\//, '');
+$('#code').textContent = code;
+$('#present-link').href = info.presentUrl;
+$('#copy-student').addEventListener('click', () => copyText(info.studentUrl));
+
+connectLive({
+  code, role: 'teacher', key,
+  onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting…'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
+  onMessage: (msg) => {
+    if (msg.type === 'session') { session = msg.session; renderSession(); renderTable(); renderQuestions(); }
+    if (msg.type === 'results') { results = msg.results; renderCounts(); renderTable(); renderQuestions(); renderThumbs(); }
+  },
+});
+
+const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0 };
+
+function renderSession() {
+  document.title = `${session.title} · Slide Pulse`;
+  $('#title').textContent = session.title;
+  const banner = $('#status-banner');
+  if (session.status === 'importing') {
+    banner.style.display = '';
+    banner.innerHTML = `<b>Importing slides…</b> <span class="muted">${escapeHtml(session.statusMessage || '')}</span>`;
+  } else if (session.status === 'error') {
+    banner.style.display = '';
+    banner.style.borderColor = 'var(--danger)';
+    banner.innerHTML = `<b>Import failed.</b> ${escapeHtml(session.statusMessage || '')} <button class="btn-sm" id="retry">Try again</button>`;
+    $('#retry').addEventListener('click', reimport);
+  } else banner.style.display = 'none';
+
+  const slide = session.slides[session.currentSlide];
+  const frame = $('#frame');
+  if (slide?.image) frame.innerHTML = `<img src="${slide.image}" alt="Slide ${session.currentSlide + 1}">`;
+  else frame.innerHTML = `<span>${session.slideCount ? 'Slide image not ready yet' : 'No slides'}</span>`;
+  $('#pos').textContent = session.slideCount ? `Slide ${session.currentSlide + 1} of ${session.slideCount}` : 'No slides';
+  $('#slide-title').textContent = slide?.title || '';
+  $('#prev').disabled = session.currentSlide <= 0;
+  $('#next').disabled = session.currentSlide >= session.slideCount - 1;
+  renderCounts();
+  renderThumbs();
+}
+
+function renderCounts() {
+  if (!session) return;
+  const c = countsFor(session.currentSlide);
+  $('#c-great').textContent = c.great;
+  $('#c-confused').textContent = c.confused;
+  $('#c-question').textContent = c.question;
+  $('#participants').textContent = `${results.participants} student${results.participants === 1 ? '' : 's'} responded`;
+}
+
+function renderThumbs() {
+  if (!session) return;
+  const el = $('#thumbs');
+  el.innerHTML = session.slides.map((s) => {
+    const c = countsFor(s.idx);
+    const hot = c.confused + c.question;
+    return `<button data-go="${s.idx}" class="${s.idx === session.currentSlide ? 'current' : ''}" title="Slide ${s.idx + 1}${s.title ? ': ' + escapeHtml(s.title) : ''}">
+      ${s.image ? `<img src="${s.image}" alt="">` : '<div style="width:96px;aspect-ratio:16/9;background:var(--surface-2);border-radius:4px"></div>'}
+      <span class="n">${s.idx + 1}</span>${hot ? `<span class="badge">${hot}</span>` : ''}
+    </button>`;
+  }).join('');
+  el.querySelector('.current')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+}
+
+function renderTable() {
+  if (!session) return;
+  const rows = session.slides.map((s) => ({ ...s, ...countsFor(s.idx) }));
+  const max = Math.max(1, ...rows.map((r) => r.great + r.confused + r.question));
+  if ($('#sort').value === 'attention') {
+    rows.sort((a, b) => (b.confused + b.question) - (a.confused + a.question) || b.great - a.great || a.idx - b.idx);
+  }
+  $('#table tbody').innerHTML = rows.map((r) => `
+    <tr class="clickable ${r.idx === session.currentSlide ? 'current' : ''}" data-go="${r.idx}">
+      <td class="mono">${r.idx + 1}</td>
+      <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.title || '')}</td>
+      <td class="num">${r.great}</td><td class="num">${r.confused}</td><td class="num">${r.question}</td>
+      <td><div class="bar">
+        <span style="left:0;width:${(r.great / max) * 100}%;background:var(--great)"></span>
+        <span style="left:${(r.great / max) * 100}%;width:${(r.confused / max) * 100}%;background:var(--confused)"></span>
+        <span style="left:${((r.great + r.confused) / max) * 100}%;width:${(r.question / max) * 100}%;background:var(--question)"></span>
+      </div></td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">No slides yet.</td></tr>';
+}
+
+function renderQuestions() {
+  if (!session) return;
+  let qs = results.questions;
+  if ($('#q-current').checked) qs = qs.filter((q) => q.slide_idx === session.currentSlide);
+  const open = results.questions.filter((q) => !q.answered).length;
+  $('#q-count').textContent = open ? `${open} open` : '';
+  $('#questions').innerHTML = qs.map((q) => `
+    <li class="${q.answered ? 'answered' : ''}">
+      <span class="slide-tag" data-go="${q.slide_idx}" title="Jump to slide">#${q.slide_idx + 1}</span>
+      <div class="text">${escapeHtml(q.text)}<div class="tiny">${timeAgo(q.created_at)}</div></div>
+      <label class="tiny row" style="flex:none"><input type="checkbox" data-answered="${q.id}" ${q.answered ? 'checked' : ''}> answered</label>
+    </li>`).join('') || '<li class="muted">No questions yet.</li>';
+}
+
+async function goTo(idx) {
+  if (!session || idx < 0 || idx >= session.slideCount) return;
+  session.currentSlide = idx; // optimistic
+  renderSession();
+  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx }, headers }); }
+  catch (err) { toast(err.message); }
+}
+async function reimport() {
+  try { await api(`/api/sessions/${code}/reimport`, { method: 'POST', headers }); toast('Re-importing…'); }
+  catch (err) { toast(err.message, 4000); }
+}
+
+$('#prev').addEventListener('click', () => goTo(session.currentSlide - 1));
+$('#next').addEventListener('click', () => goTo(session.currentSlide + 1));
+$('#reimport').addEventListener('click', reimport);
+$('#sort').addEventListener('change', renderTable);
+$('#q-current').addEventListener('change', renderQuestions);
+document.addEventListener('click', async (e) => {
+  const go = e.target.closest('[data-go]');
+  if (go) return goTo(Number(go.dataset.go));
+  const ans = e.target.closest('[data-answered]');
+  if (ans) {
+    try { await api(`/api/sessions/${code}/questions/${ans.dataset.answered}`, { method: 'POST', body: { answered: ans.checked }, headers }); }
+    catch (err) { toast(err.message); }
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea, select')) return;
+  if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); goTo(session.currentSlide + 1); }
+  if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goTo(session.currentSlide - 1); }
+  if (e.key === 'Home') goTo(0);
+  if (e.key === 'End') goTo(session.slideCount - 1);
+});
+setInterval(renderQuestions, 30_000);
+</script>
+</body>
+</html>

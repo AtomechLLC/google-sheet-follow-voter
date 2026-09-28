@@ -1,0 +1,11 @@
+services:
+  slide-pulse:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - slide-pulse-data:/data
+    restart: unless-stopped
+volumes:
+  slide-pulse-data:
