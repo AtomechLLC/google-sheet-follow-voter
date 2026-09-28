@@ -37,6 +37,12 @@
   .mine li.answered::after { content: " · answered"; color: var(--text-3); font-size: .8rem; }
   .status-screen { text-align: center; padding: 48px 16px; }
   footer { text-align: center; }
+  dialog#lang-dialog { border: 0; border-radius: 16px 16px 0 0; padding: 16px; width: 100%; max-width: 560px; margin: auto auto 0; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  dialog#lang-dialog::backdrop { background: rgba(0,0,0,.45); }
+  .lang-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 60dvh; overflow-y: auto; }
+  .lang-grid button { justify-content: flex-start; gap: 10px; min-height: 52px; font-weight: 600; }
+  .lang-grid button .flag { font-size: 1.6rem; line-height: 1; }
+  .lang-grid button.active { border-color: var(--accent); background: var(--great-soft); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -44,7 +50,7 @@
   <header>
     <h1 id="title">Connecting…</h1>
     <div class="row" style="flex:none; gap:6px">
-      <select id="lang" aria-label="Language" style="width:auto; padding:6px 8px; font-size:.85rem"></select>
+      <button id="lang-btn" class="btn-sm" aria-haspopup="dialog" title="Language" style="gap:6px; padding:4px 10px"><span id="lang-flag" style="font-size:1.3rem; line-height:1">🌐</span><span id="lang-code" class="tiny" style="font-weight:700"></span></button>
       <span id="conn" class="pill">…</span>
     </div>
   </header>
@@ -87,6 +93,13 @@
     </div>
   </div>
 
+  <dialog id="lang-dialog" aria-labelledby="lang-title">
+    <div class="row spread" style="margin-bottom:10px">
+      <h2 id="lang-title" style="margin:0" data-i18n="language">Language</h2>
+      <button id="lang-close" class="btn-icon btn-sm" aria-label="Close">✕</button>
+    </div>
+    <div class="lang-grid" id="lang-grid"></div>
+  </dialog>
   <footer class="tiny" data-i18n="anon">Your answers are anonymous. Nobody sees who tapped what.</footer>
 </div>
 
@@ -113,14 +126,28 @@ function applyStrings() {
 }
 
 function renderLangPicker() {
-  const sel = $('#lang');
-  const langs = session?.translation?.languages || [{ code: 'en', native: 'English' }];
+  const langs = session?.translation?.languages || [{ code: 'en', native: 'English', flag: '🇺🇸' }];
   if (!langs.find((l) => l.code === lang)) lang = session?.translation?.source || 'en';
-  sel.innerHTML = langs.map((l) => `<option value="${l.code}" ${l.code === lang ? 'selected' : ''}>${escapeHtml(l.native)}</option>`).join('');
+  const current = langs.find((l) => l.code === lang);
+  $('#lang-flag').textContent = current?.flag || '🌐';
+  $('#lang-code').textContent = lang.toUpperCase();
+  $('#lang-btn').title = current?.native || 'Language';
+  $('#lang-grid').innerHTML = langs.map((l) => `
+    <button type="button" data-lang="${l.code}" class="${l.code === lang ? 'active' : ''}" lang="${l.code}">
+      <span class="flag" aria-hidden="true">${l.flag || '🌐'}</span><span>${escapeHtml(l.native)}</span>
+    </button>`).join('');
 }
-$('#lang').addEventListener('change', () => {
-  lang = $('#lang').value;
+const dlg = $('#lang-dialog');
+$('#lang-btn').addEventListener('click', () => { renderLangPicker(); dlg.showModal(); });
+$('#lang-close').addEventListener('click', () => dlg.close());
+dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+$('#lang-grid').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-lang]');
+  if (!b) return;
+  lang = b.dataset.lang;
   try { localStorage.setItem(LANG_KEY, lang); } catch {}
+  dlg.close();
+  renderLangPicker();
   applyStrings();
   render();
 });

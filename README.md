@@ -86,7 +86,7 @@ the public https URL. WebSockets must be passed through (`/ws`); Caddy and most 
 ## Speaker notes in the student's language
 
 Each slide's **speaker notes** are imported with the deck and shown on the student page under the
-slide. Students pick their language from a menu in the header; the buttons and labels switch
+slide. Students tap the flag button in the header and pick their language from a sheet of flags; the buttons and labels switch
 immediately, and the notes are translated on demand. Each translation is done once per slide and
 language and cached, so a 40-slide deck read in Romanian costs 40 short translations, total.
 

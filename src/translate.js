@@ -100,7 +100,7 @@ export function translationInfo() {
     provider: provider?.name || null,
     source: sourceLanguage,
     languages: LANGUAGES.filter((l) => l.code === sourceLanguage || (provider && provider.supports(l.code))).map(
-      ({ code, name, native, rtl }) => ({ code, name, native, rtl: Boolean(rtl) })
+      ({ code, flag, name, native, rtl }) => ({ code, flag, name, native, rtl: Boolean(rtl) })
     ),
   };
 }
