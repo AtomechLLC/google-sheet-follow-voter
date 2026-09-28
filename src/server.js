@@ -14,9 +14,11 @@ import {
   createDemoSlides,
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults } from './live.js';
+import { zipDirectory } from './zip.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
+const extensionDir = path.join(__dirname, '..', 'extension');
 
 const app = express();
 app.disable('x-powered-by');
@@ -103,6 +105,21 @@ app.get('/p/:code', page('present.html'));
 app.get('/join', (req, res) => {
   const code = String(req.query.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   res.redirect(code ? `/s/${code}` : '/');
+});
+
+// Downloadable copy of the Chrome extension, built once at startup from the extension/ folder.
+let extensionZip = null;
+try {
+  extensionZip = zipDirectory(extensionDir, 'slide-pulse-extension');
+} catch (err) {
+  console.warn('[extension] could not package extension/:', err.message);
+}
+app.get('/extension.zip', (req, res) => {
+  if (!extensionZip) return res.status(404).send('Extension package not available on this server.');
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', 'attachment; filename="slide-pulse-extension.zip"');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(extensionZip);
 });
 
 app.use('/slides', express.static(slidesDir, { maxAge: '365d', immutable: true, fallthrough: false }));

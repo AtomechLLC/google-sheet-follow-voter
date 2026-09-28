@@ -106,8 +106,11 @@ slide's id) and tells the server. Student phones follow with no dashboard intera
 
 Install once (Chrome, Edge, Brave, or any Chromium browser):
 
-1. Open `chrome://extensions`, turn on **Developer mode** (top right).
-2. Click **Load unpacked** and choose the `extension/` folder from this repository.
+1. Download the extension from your own server at `https://YOUR-DOMAIN/extension.zip` (linked from the
+   home page and from every dashboard) and unzip it somewhere permanent. The `extension/` folder in this
+   repository is the same thing.
+2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked** and choose
+   the unzipped folder.
 3. Pin the "Slide Pulse Follower" icon, click it, and paste a **dashboard link**
    (the `/t/CODE?key=…` URL; there is a copy button on the dashboard under the QR code). Click **Pair**.
    You can pair several presentations; the extension picks the right one by the deck being shown.
