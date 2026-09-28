@@ -177,6 +177,18 @@ Install once (Chrome, Edge, Brave, or any Chromium browser):
    each slide change ("Slide Pulse: slide 4 of 20"). A red badge means it could not reach the server
    or the slide is unknown (re-import the deck on the dashboard after editing it).
 
+**Updating.** An unpacked extension does not auto-update: Chrome only updates extensions installed
+from the Chrome Web Store. The app helps in two ways: the dashboard header shows the version of the
+extension connected from the presenting laptop and turns orange with a download link when the site
+serves a newer one, and the extension popup and in-page badge say "update available" too. To update,
+download the zip again, unzip it over the same folder, and click ↻ on `chrome://extensions`.
+
+To get real auto-updates, publish the `extension/` folder to the Chrome Web Store as an **unlisted**
+item (one-time developer registration fee; review usually takes a few days). Upload the same
+`/extension.zip` from your site, fill in the listing (the description in `manifest.json` works;
+`extension/icons/128.png` is the store icon; take one 1280×800 screenshot of the popup), and share
+the store link with co-instructors. Later versions upload the same way and roll out automatically.
+
 By default it only follows in Present mode; tick "Also follow while editing" in the popup if you
 prefer to present from the editor view. It only runs on `docs.google.com/presentation/*` pages and
 sends nothing but the slide id and your session key to your own server.

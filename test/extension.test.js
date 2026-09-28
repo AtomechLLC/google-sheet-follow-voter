@@ -6,7 +6,7 @@ import fs from 'node:fs';
 const src = fs.readFileSync(new URL('../extension/shared.js', import.meta.url), 'utf8');
 const mod = { exports: {} };
 new Function('module', src)(mod);
-const { parseSlidesUrl, parseDashboardLink } = mod.exports;
+const { parseSlidesUrl, parseDashboardLink, isNewer } = mod.exports;
 
 test('parseSlidesUrl reads present-mode and editor URLs', () => {
   const id = '1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd';
@@ -26,4 +26,12 @@ test('parseDashboardLink extracts server, code and key', () => {
     { server: 'https://pulse.example.com', code: 'ABC123', key: 's3cr3t' });
   assert.equal(parseDashboardLink('https://pulse.example.com/s/ABC123'), null);
   assert.equal(parseDashboardLink('not a url'), null);
+});
+
+test('isNewer compares dotted versions numerically', () => {
+  assert.equal(isNewer('1.2.0', '1.1.2'), true);
+  assert.equal(isNewer('1.10.0', '1.9.0'), true);
+  assert.equal(isNewer('1.1.2', '1.1.2'), false);
+  assert.equal(isNewer('1.1.2', '1.2.0'), false);
+  assert.equal(isNewer('2', '1.9.9'), true);
 });

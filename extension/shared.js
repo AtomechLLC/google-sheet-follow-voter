@@ -24,4 +24,14 @@ function parseDashboardLink(text) {
   return { server: u.origin, code: m[1].toUpperCase(), key };
 }
 
-if (typeof module !== 'undefined') module.exports = { parseSlidesUrl, parseDashboardLink };
+/** True when version string a is newer than b (dotted integers). */
+function isNewer(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+if (typeof module !== 'undefined') module.exports = { parseSlidesUrl, parseDashboardLink, isNewer };

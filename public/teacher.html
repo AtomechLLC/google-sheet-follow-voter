@@ -57,6 +57,7 @@
         <span id="participants" class="pill">0 students</span>
         <button id="me" class="pill" style="min-height:0;border:0;cursor:pointer" title="Change the name co-instructors see">You: …</button>
         <span id="instructors" class="pill" title="Instructors on this dashboard right now"></span>
+        <span id="ext-status" class="pill" style="display:none"></span>
         <span>Keys: <span class="kbd">←</span> <span class="kbd">→</span> change slide</span>
       </div>
     </div>
@@ -209,6 +210,21 @@ connectLive({
     if (msg.type === 'presence') {
       const others = msg.instructors.filter((n) => n !== myName);
       $('#instructors').textContent = others.length ? `Also here: ${others.join(', ')}` : 'Only you are here';
+      const exts = msg.extensions || [];
+      const el = $('#ext-status');
+      if (!exts.length) el.style.display = 'none';
+      else {
+        const latest = info.extensionVersion;
+        const stale = exts.filter((e) => latest && isNewer(latest, e.version));
+        el.style.display = '';
+        if (stale.length) {
+          el.className = 'pill warn';
+          el.innerHTML = `Extension outdated on ${escapeHtml(stale.map((e) => e.name.replace(/ \(Slides\)$/, '')).join(', '))}: v${escapeHtml(stale[0].version)} → v${escapeHtml(latest)} · <a href="/extension.zip" download>download</a>`;
+        } else {
+          el.className = 'pill ok';
+          el.textContent = `Google Slides connected (extension v${exts[0].version})`;
+        }
+      }
     }
   },
 });
@@ -220,6 +236,11 @@ function renderChangedBy() {
 }
 
 const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0, open: 0 };
+function isNewer(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x > y; }
+  return false;
+}
 
 function renderSession() {
   document.title = `${session.title} · Slide Pulse`;

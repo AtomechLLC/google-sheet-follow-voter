@@ -1,4 +1,5 @@
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -114,11 +115,14 @@ app.get('/join', (req, res) => {
 
 // Downloadable copy of the Chrome extension, built once at startup from the extension/ folder.
 let extensionZip = null;
+let extensionVersion = null;
 try {
   extensionZip = zipDirectory(extensionDir, 'slide-pulse-extension');
+  extensionVersion = JSON.parse(fs.readFileSync(path.join(extensionDir, 'manifest.json'), 'utf8')).version;
 } catch (err) {
   console.warn('[extension] could not package extension/:', err.message);
 }
+export const currentExtensionVersion = () => extensionVersion;
 app.get('/extension.zip', (req, res) => {
   if (!extensionZip) return res.status(404).send('Extension package not available on this server.');
   res.set('Content-Type', 'application/zip');
@@ -237,7 +241,7 @@ app.get('/api/sessions/:code/teacher', loadSession, requireTeacher, (req, res) =
   // A signed-in instructor opening an invite link gets the session added to their list.
   const teacher = currentTeacher(req);
   if (teacher && !Sessions.roleFor(req.session, teacher.id)) Sessions.addMember(req.session.code, teacher.id, req.role);
-  res.json({ ...sessionSummary(req.session, req.role), results: resultsState(req.session.code) });
+  res.json({ ...sessionSummary(req.session, req.role), results: resultsState(req.session.code), extensionVersion });
 });
 
 app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) => {
@@ -285,6 +289,11 @@ function cors(req, res, next) {
 }
 app.use('/api/ext', cors);
 
+/** Latest extension version served by this site, so installed copies can warn when outdated. */
+app.get('/api/ext/version', (req, res) => {
+  res.json({ version: extensionVersion, downloadUrl: `${config.baseUrl}/extension.zip` });
+});
+
 /** Pairing: the extension pastes a dashboard link, we return what it needs to store. */
 app.get('/api/ext/session/:code', loadSession, requireTeacher, (req, res) => {
   const s = req.session;
@@ -296,6 +305,7 @@ app.get('/api/ext/session/:code', loadSession, requireTeacher, (req, res) => {
     currentSlide: s.current_slide,
     demo: !s.presentation_id,
     role: req.role,
+    latestExtensionVersion: extensionVersion,
   });
 });
 

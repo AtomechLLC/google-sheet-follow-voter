@@ -8,8 +8,28 @@ function render(sessions) {
 }
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+const myVersion = chrome.runtime.getManifest().version;
+$('#ver').textContent = `v${myVersion}`;
+
+/** Ask each paired site whether it serves a newer extension. */
+async function checkUpdates(sessions) {
+  const servers = [...new Set(sessions.map((s) => s.server))];
+  for (const server of servers) {
+    try {
+      const { version, downloadUrl } = await (await fetch(`${server}/api/ext/version`)).json();
+      if (version && isNewer(version, myVersion)) {
+        const el = $('#update');
+        el.style.display = '';
+        el.innerHTML = `Update available: v${esc(version)}. <a href="${esc(downloadUrl || server + '/extension.zip')}" target="_blank" rel="noopener">Download</a>, unzip over your extension folder, then click ↻ on chrome://extensions.`;
+        return;
+      }
+    } catch {}
+  }
+}
+
 chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: true, instructorName: '' }, (v) => {
   render(v.sessions);
+  checkUpdates(v.sessions);
   $('#editor').checked = Boolean(v.followInEditor);
   $('#paused').checked = Boolean(v.paused);
   $('#remote').checked = Boolean(v.remote);

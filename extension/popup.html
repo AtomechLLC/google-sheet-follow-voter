@@ -24,11 +24,12 @@
 </style>
 </head>
 <body>
-  <h1>Slide Pulse Follower</h1>
+  <h1>Slide Pulse Follower <span id="ver" style="font-weight:400;color:#888;font-size:12px"></span></h1>
   <p>Paste the <b>dashboard link</b> of a presentation (the one with <code>?key=</code>). Then present from Google Slides as usual.</p>
   <input type="text" id="link" placeholder="https://your-server/t/ABC123?key=…">
   <button id="pair">Pair</button>
   <div class="msg" id="msg"></div>
+  <div class="msg err" id="update" style="display:none"></div>
   <ul id="list"></ul>
   <label style="display:block"><span style="display:block;margin-bottom:4px">Your name (shown to co-instructors)</span><input type="text" id="name" placeholder="e.g. Alex" maxlength="40"></label>
   <label><input type="checkbox" id="editor"> Also follow while editing (not just in Present mode)</label>

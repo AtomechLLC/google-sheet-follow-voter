@@ -87,6 +87,20 @@
     report(session, info);
   }
 
+  // ---------- update check: warn once per page when the site serves a newer extension ----------
+  let updateChecked = false;
+  async function checkForUpdate(session) {
+    if (updateChecked) return;
+    updateChecked = true;
+    try {
+      const res = await fetch(`${session.server}/api/ext/version`);
+      const { version } = await res.json();
+      if (version && isNewer(version, chrome.runtime.getManifest().version)) {
+        showBadge(`Slide Pulse: update available (${version}). Download it from the dashboard.`, false);
+      }
+    } catch {}
+  }
+
   // ---------- remote control: let the session drive this tab ----------
   function currentSession() {
     const info = parseSlidesUrl(location.href);
@@ -109,9 +123,10 @@
     const url = new URL(session.server);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.pathname = '/ws';
-    url.search = new URLSearchParams({ code: session.code, role: 'teacher', key: session.key, name: `${instructorName || 'Presenter'} (Slides)` }).toString();
+    url.search = new URLSearchParams({ code: session.code, role: 'teacher', key: session.key, name: `${instructorName || 'Presenter'} (Slides)`, ext: chrome.runtime.getManifest().version }).toString();
     const ws = new WebSocket(url);
     socket = ws;
+    ws.onopen = () => checkForUpdate(session);
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type !== 'session' || !msg.session) return;
