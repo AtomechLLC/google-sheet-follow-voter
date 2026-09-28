@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import { Sessions, Votes, Questions } from './db.js';
+import { translationInfo } from './translate.js';
 
 /** Public state (safe for students). */
 export function publicState(code) {
@@ -14,10 +15,12 @@ export function publicState(code) {
     currentSlide: s.current_slide,
     changedBy: s.changed_by,
     changedAt: s.changed_at,
+    translation: translationInfo(),
     slides: Sessions.slides(code).map((sl) => ({
       idx: sl.idx,
       title: sl.title,
       image: sl.image ? `/slides/${code}/${sl.image}` : null,
+      notes: sl.notes || null,
     })),
   };
 }

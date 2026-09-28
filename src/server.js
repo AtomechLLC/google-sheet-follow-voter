@@ -15,6 +15,9 @@ import {
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults } from './live.js';
 import { zipDirectory } from './zip.js';
+import { translateText, translationInfo, provider as translationProvider } from './translate.js';
+import { byCode } from './languages.js';
+import { Translations } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
@@ -311,6 +314,38 @@ app.post('/api/ext/session/:code/slide', loadSession, requireTeacher, (req, res)
   res.json({ index: slide.idx, slideCount: s.slide_count });
 });
 
+// ---------- speaker notes + translation ----------
+const inflightTranslations = new Map(); // "code:idx:lang" -> Promise
+
+app.get('/api/sessions/:code/notes/:idx', loadSession, async (req, res, next) => {
+  try {
+    const idx = Number(req.params.idx);
+    const lang = String(req.query.lang || translationInfo().source).toLowerCase();
+    if (!Number.isInteger(idx)) return res.status(400).json({ error: 'bad slide index' });
+    if (!byCode(lang)) return res.status(400).json({ error: 'unknown language' });
+    const slide = Sessions.slide(req.session.code, idx);
+    if (!slide) return res.status(404).json({ error: 'Slide not found' });
+    if (!slide.notes) return res.json({ lang, hasNotes: false, text: '', translated: false });
+
+    const hash = crypto.createHash('sha1').update(slide.notes).digest('hex');
+    const cached = Translations.get(req.session.code, idx, lang);
+    if (cached && cached.source_hash === hash) return res.json({ lang, hasNotes: true, text: cached.text, translated: true });
+
+    const key = `${req.session.code}:${idx}:${lang}`;
+    let job = inflightTranslations.get(key);
+    if (!job) {
+      job = translateText(slide.notes, lang).finally(() => inflightTranslations.delete(key));
+      inflightTranslations.set(key, job);
+    }
+    const result = await job;
+    if (result.translated) Translations.put(req.session.code, idx, lang, hash, result.text);
+    res.json({ lang, hasNotes: true, ...result });
+  } catch (err) {
+    console.error('[translate]', err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ---------- student API ----------
 app.get('/api/sessions/:code/me', loadSession, (req, res) => {
   const studentId = cleanStudentId(req.query.student);
@@ -365,4 +400,5 @@ server.listen(config.port, () => {
   console.log(`Slide Pulse listening on ${config.baseUrl} (port ${config.port})`);
   if (!googleConfigured) console.warn('[google] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set: Google Slides import is disabled.');
   if (config.demoMode) console.log('[demo] DEMO_MODE is on: /api/demo creates placeholder sessions.');
+  console.log(translationProvider ? `[translate] provider: ${translationProvider.name}` : '[translate] no provider configured; speaker notes are shown untranslated.');
 });

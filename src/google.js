@@ -85,6 +85,20 @@ async function slidesGet(token, url) {
   return body;
 }
 
+/** Speaker notes text for a slide (the notes page's speaker-notes shape). */
+function slideNotes(slide) {
+  const notesPage = slide.slideProperties?.notesPage;
+  const target = notesPage?.notesProperties?.speakerNotesObjectId;
+  if (!notesPage || !target) return null;
+  const el = (notesPage.pageElements || []).find((e) => e.objectId === target);
+  const paragraphs = [];
+  for (const t of el?.shape?.text?.textElements || []) {
+    if (t.textRun?.content) paragraphs.push(t.textRun.content);
+  }
+  const text = paragraphs.join('').replace(/\v/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return text || null;
+}
+
 function slideTitle(slide) {
   // First non-empty text run on the slide, used as a label on the dashboard.
   for (const el of slide.pageElements || []) {
@@ -112,7 +126,9 @@ export async function importPresentation({ teacher, session, onProgress = () => 
 
   try {
     const token = await accessTokenFor(teacher);
-    const fields = 'title,slides(objectId,pageElements(shape(text(textElements(textRun(content))))))';
+    const fields =
+      'title,slides(objectId,pageElements(shape(text(textElements(textRun(content))))),' +
+      'slideProperties(notesPage(notesProperties(speakerNotesObjectId),pageElements(objectId,shape(text(textElements(textRun(content))))))))';
     const pres = await slidesGet(token, `${SLIDES_API}/${session.presentation_id}?fields=${encodeURIComponent(fields)}`);
     const slides = pres.slides || [];
     const title = pres.title || session.title;
@@ -126,7 +142,7 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     // Keep old images visible while re-importing; replace metadata now.
     Sessions.replaceSlides(
       code,
-      slides.map((s, i) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), image: null }))
+      slides.map((s, i) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), image: null }))
     );
     onProgress();
 
@@ -144,7 +160,7 @@ export async function importPresentation({ teacher, session, onProgress = () => 
         const thumb = await slidesGet(await accessTokenFor(teacher), url);
         const file = `${i}-${Date.now().toString(36)}.png`;
         await downloadTo(thumb.contentUrl, path.join(dir, file));
-        Sessions.upsertSlide(code, { idx: i, objectId: s.objectId, title: slideTitle(s), image: file });
+        Sessions.upsertSlide(code, { idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), image: file });
         done++;
         Sessions.setStatus(code, {
           status: 'importing',
@@ -192,7 +208,8 @@ export function createDemoSlides(code, count = 8) {
 </svg>`;
     const file = `${i}.svg`;
     fs.writeFileSync(path.join(dir, file), svg);
-    slides.push({ idx: i, objectId: `demo-${i}`, title, image: file });
+    const notes = i % 4 === 3 ? null : `Speaker notes for "${title}".\n\nExplain the idea slowly. Ask the class for an example before moving on.\nRemind students they can tap "I didn't understand" at any time.`;
+    slides.push({ idx: i, objectId: `demo-${i}`, title, notes, image: file });
   }
   Sessions.replaceSlides(code, slides);
   Sessions.setStatus(code, { status: 'ready', message: null, slideCount: count });

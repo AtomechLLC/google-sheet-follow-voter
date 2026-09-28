@@ -43,11 +43,14 @@
 <div class="wrap">
   <header>
     <h1 id="title">Connecting…</h1>
-    <span id="conn" class="pill">…</span>
+    <div class="row" style="flex:none; gap:6px">
+      <select id="lang" aria-label="Language" style="width:auto; padding:6px 8px; font-size:.85rem"></select>
+      <span id="conn" class="pill">…</span>
+    </div>
   </header>
 
   <div id="importing" class="card status-screen" style="display:none">
-    <h2>Getting the slides ready…</h2>
+    <h2 data-i18n="preparing">Getting the slides ready…</h2>
     <p class="muted" id="importing-msg"></p>
   </div>
 
@@ -57,36 +60,112 @@
       <button id="prev" class="btn-icon" aria-label="Previous slide">◀</button>
       <div style="text-align:center">
         <div class="pos" id="pos"></div>
-        <button id="follow" class="btn-sm follow">↩ Back to live slide</button>
+        <button id="follow" class="btn-sm follow" data-i18n="backLive">↩ Back to live slide</button>
       </div>
       <button id="next" class="btn-icon" aria-label="Next slide">▶</button>
     </div>
 
     <div class="votes" role="group" aria-label="Feedback for this slide">
-      <button class="vote great" data-kind="great"><span class="ico">👍</span> This slide is great! <span class="check">✓</span></button>
-      <button class="vote confused" data-kind="confused"><span class="ico">🤔</span> I didn't understand <span class="check">✓</span></button>
-      <button class="vote question" data-kind="question"><span class="ico">❓</span> I have a question <span class="check">✓</span></button>
+      <button class="vote great" data-kind="great"><span class="ico">👍</span> <span data-i18n="great">This slide is great!</span> <span class="check">✓</span></button>
+      <button class="vote confused" data-kind="confused"><span class="ico">🤔</span> <span data-i18n="confused">I didn't understand</span> <span class="check">✓</span></button>
+      <button class="vote question" data-kind="question"><span class="ico">❓</span> <span data-i18n="question">I have a question</span> <span class="check">✓</span></button>
+    </div>
+
+    <div class="card" id="notes-card" style="display:none">
+      <div class="row spread"><b data-i18n="notes">Speaker notes</b><span class="tiny" id="notes-meta"></span></div>
+      <div id="notes-text" style="white-space:pre-wrap; word-break:break-word; margin-top:6px; font-size:.95rem"></div>
     </div>
 
     <div class="card qbox" id="qbox">
-      <label for="qtext"><b>Your question</b> <span class="tiny">(anonymous, optional)</span></label>
-      <textarea id="qtext" maxlength="500" placeholder="What would you like explained?"></textarea>
+      <label for="qtext"><b data-i18n="yourQuestion">Your question</b> <span class="tiny" data-i18n="optional">(anonymous, optional)</span></label>
+      <textarea id="qtext" maxlength="500" placeholder="What would you like explained?" data-i18n-placeholder="placeholder"></textarea>
       <div class="row" style="margin-top:8px">
-        <button class="btn-primary" id="send">Send question</button>
-        <button id="qclose" class="btn-sm">Close</button>
+        <button class="btn-primary" id="send" data-i18n="send">Send question</button>
+        <button id="qclose" class="btn-sm" data-i18n="close">Close</button>
       </div>
       <ul class="mine" id="mine"></ul>
     </div>
   </div>
 
-  <footer class="tiny">Your answers are anonymous. Nobody sees who tapped what.</footer>
+  <footer class="tiny" data-i18n="anon">Your answers are anonymous. Nobody sees who tapped what.</footer>
 </div>
 
 <script type="module">
 import { $, $$, api, toast, connectLive, codeFromPath, escapeHtml, studentId } from '/common.js';
+import { t, STRINGS } from '/i18n.js';
 
 const code = codeFromPath();
 const me = studentId();
+const LANG_KEY = 'slidepulse.lang';
+let lang = 'en';
+try { lang = localStorage.getItem(LANG_KEY) || (navigator.language || 'en').slice(0, 2).toLowerCase(); } catch {}
+if (!STRINGS[lang]) lang = 'en';
+const notesCache = new Map(); // "idx:lang" -> {text, translated, reason}
+let notesRequest = 0;
+
+function applyStrings() {
+  const info = session?.translation;
+  const rtl = Boolean(info?.languages?.find((l) => l.code === lang)?.rtl);
+  document.documentElement.lang = lang;
+  document.documentElement.dir = rtl ? 'rtl' : 'ltr';
+  for (const el of $$('[data-i18n]')) el.textContent = t(lang, el.dataset.i18n);
+  for (const el of $$('[data-i18n-placeholder]')) el.placeholder = t(lang, el.dataset.i18nPlaceholder);
+}
+
+function renderLangPicker() {
+  const sel = $('#lang');
+  const langs = session?.translation?.languages || [{ code: 'en', native: 'English' }];
+  if (!langs.find((l) => l.code === lang)) lang = session?.translation?.source || 'en';
+  sel.innerHTML = langs.map((l) => `<option value="${l.code}" ${l.code === lang ? 'selected' : ''}>${escapeHtml(l.native)}</option>`).join('');
+}
+$('#lang').addEventListener('change', () => {
+  lang = $('#lang').value;
+  try { localStorage.setItem(LANG_KEY, lang); } catch {}
+  applyStrings();
+  render();
+});
+
+async function renderNotes() {
+  const card = $('#notes-card');
+  const slide = session?.slides?.[viewing];
+  if (!slide) return (card.style.display = 'none');
+  if (!slide.notes) {
+    card.style.display = '';
+    $('#notes-meta').textContent = '';
+    $('#notes-text').textContent = t(lang, 'noNotes');
+    $('#notes-text').classList.add('muted');
+    return;
+  }
+  card.style.display = '';
+  $('#notes-text').classList.remove('muted');
+  const source = session.translation?.source || 'en';
+  if (lang === source || !session.translation?.enabled) {
+    $('#notes-meta').textContent = '';
+    $('#notes-text').textContent = slide.notes;
+    return;
+  }
+  const key = `${viewing}:${lang}`;
+  const req = ++notesRequest;
+  let entry = notesCache.get(key);
+  if (!entry) {
+    $('#notes-meta').textContent = t(lang, 'loading');
+    $('#notes-text').textContent = slide.notes;
+    try {
+      entry = await api(`/api/sessions/${code}/notes/${viewing}?lang=${lang}`);
+      notesCache.set(key, entry);
+    } catch {
+      entry = { text: slide.notes, translated: false, failed: true };
+    }
+    if (req !== notesRequest) return; // user moved on
+  }
+  $('#notes-text').textContent = entry.text;
+  $('#notes-meta').textContent = entry.translated ? t(lang, 'autoTranslated') : entry.failed ? t(lang, 'translateFailed') : (entry.reason || '');
+  // Warm the next slide's translation so it is instant when the teacher advances.
+  const next = viewing + 1;
+  if (session.slides[next]?.notes && !notesCache.has(`${next}:${lang}`)) {
+    api(`/api/sessions/${code}/notes/${next}?lang=${lang}`).then((e) => notesCache.set(`${next}:${lang}`, e)).catch(() => {});
+  }
+}
 let session = null;
 let viewing = null;         // slide index shown on this phone
 let following = true;       // auto-advance with the teacher
@@ -98,7 +177,7 @@ try {
   myVotes = new Set(mine.votes.map((v) => `${v.slide_idx}:${v.kind}`));
   myQuestions = mine.questions;
 } catch (err) {
-  document.body.innerHTML = `<div class="wrap"><div class="card status-screen"><h1>Session not found</h1><p class="muted">Check the link or QR code with your teacher.</p></div></div>`;
+  document.body.innerHTML = `<div class="wrap"><div class="card status-screen"><h1>${t(lang, 'notFound')}</h1><p class="muted">${t(lang, 'checkLink')}</p></div></div>`;
   throw err;
 }
 
@@ -109,6 +188,7 @@ connectLive({
     if (msg.type !== 'session') return;
     const prev = session;
     session = msg.session;
+    if (!prev) { renderLangPicker(); applyStrings(); }
     if (viewing === null || following || (prev && prev.currentSlide !== session.currentSlide && viewing === prev.currentSlide)) {
       viewing = session.currentSlide;
       following = true;
@@ -123,13 +203,14 @@ function render() {
   const ready = session.slideCount > 0;
   $('#importing').style.display = ready ? 'none' : '';
   $('#importing-msg').textContent = session.status === 'error' ? 'The teacher needs to fix the import.' : (session.statusMessage || '');
+  applyStrings();
   $('#main').style.display = ready ? '' : 'none';
   if (!ready) return;
 
   viewing = Math.max(0, Math.min(session.slideCount - 1, viewing));
   const slide = session.slides[viewing];
-  $('#frame').innerHTML = slide?.image ? `<img src="${slide.image}" alt="Slide ${viewing + 1}">` : '<span>Slide image loading…</span>';
-  $('#pos').textContent = `Slide ${viewing + 1} of ${session.slideCount}`;
+  $('#frame').innerHTML = slide?.image ? `<img src="${slide.image}" alt="Slide ${viewing + 1}">` : `<span>${t(lang, 'imgLoading')}</span>`;
+  $('#pos').textContent = t(lang, 'slideOf', { n: viewing + 1, m: session.slideCount });
   $('#prev').disabled = viewing <= 0;
   $('#next').disabled = viewing >= session.slideCount - 1;
   $('#follow').classList.toggle('show', viewing !== session.currentSlide);
@@ -140,6 +221,7 @@ function render() {
   }
   const mine = myQuestions.filter((q) => q.slide_idx === viewing);
   $('#mine').innerHTML = mine.map((q) => `<li class="${q.answered ? 'answered' : ''}">${escapeHtml(q.text)}</li>`).join('');
+  renderNotes();
 }
 
 function show(idx, follow = false) {
@@ -160,8 +242,8 @@ async function vote(kind) {
     render();
     if (r.active) {
       if (navigator.vibrate) navigator.vibrate(15);
-      toast({ great: 'Thanks! 👍', confused: 'Got it. Your teacher will see this.', question: 'Flagged. Add details below if you like.' }[kind]);
-    } else toast('Removed');
+      toast(t(lang, { great: 'thanks', confused: 'gotIt', question: 'flagged' }[kind]));
+    } else toast(t(lang, 'removed'));
     return r.active;
   } catch (err) { toast(err.message, 3000); }
 }
@@ -187,14 +269,14 @@ for (const b of $$('.vote')) {
 $('#qclose').addEventListener('click', () => $('#qbox').classList.remove('show'));
 $('#send').addEventListener('click', async () => {
   const text = $('#qtext').value.trim();
-  if (!text) return toast('Type your question first');
+  if (!text) return toast(t(lang, 'typeFirst'));
   $('#send').disabled = true;
   try {
     const r = await api(`/api/sessions/${code}/question`, { method: 'POST', body: { studentId: me, slide: viewing, text } });
     myVotes = new Set(r.votes.map((v) => `${v.slide_idx}:${v.kind}`));
     myQuestions = r.questions;
     $('#qtext').value = '';
-    toast('Question sent');
+    toast(t(lang, 'sent'));
     render();
   } catch (err) { toast(err.message, 3000); }
   finally { $('#send').disabled = false; }

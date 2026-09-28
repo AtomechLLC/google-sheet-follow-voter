@@ -84,6 +84,10 @@
           <div class="stat question"><div class="n" id="c-question">0</div><div class="l"><span class="dot question"></span>Questions</div></div>
         </div>
         <div class="thumbs" id="thumbs"></div>
+        <details id="notes-box" style="margin-top:8px">
+          <summary class="tiny" style="cursor:pointer">Speaker notes <span id="notes-langs"></span></summary>
+          <div id="notes" class="tiny" style="white-space:pre-wrap; word-break:break-word; margin-top:6px; color:var(--text-2)"></div>
+        </details>
       </div>
 
       <div class="card">
@@ -228,6 +232,9 @@ function renderSession() {
   else frame.innerHTML = `<span>${session.slideCount ? 'Slide image not ready yet' : 'No slides'}</span>`;
   $('#pos').textContent = session.slideCount ? `Slide ${session.currentSlide + 1} of ${session.slideCount}` : 'No slides';
   $('#slide-title').textContent = slide?.title || '';
+  $('#notes').textContent = slide?.notes || 'No speaker notes on this slide.';
+  const tr = session.translation;
+  $('#notes-langs').textContent = tr?.enabled ? `· students can read them in ${tr.languages.length} languages via ${tr.provider}` : '· translation not configured (see README)';
   renderChangedBy();
   $('#prev').disabled = session.currentSlide <= 0;
   $('#next').disabled = session.currentSlide >= session.slideCount - 1;

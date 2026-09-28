@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS questions (
   answered INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS translations (
+  session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
+  slide_idx INTEGER NOT NULL,
+  lang TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (session_code, slide_idx, lang)
+);
 CREATE TABLE IF NOT EXISTS session_members (
   session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
   teacher_id TEXT NOT NULL,
@@ -73,6 +82,8 @@ const sessionCols = new Set(db.prepare('PRAGMA table_info(sessions)').all().map(
 if (!sessionCols.has('cohost_key')) db.exec('ALTER TABLE sessions ADD COLUMN cohost_key TEXT');
 if (!sessionCols.has('changed_by')) db.exec('ALTER TABLE sessions ADD COLUMN changed_by TEXT');
 if (!sessionCols.has('changed_at')) db.exec('ALTER TABLE sessions ADD COLUMN changed_at INTEGER');
+const slideCols = new Set(db.prepare('PRAGMA table_info(slides)').all().map((c) => c.name));
+if (!slideCols.has('notes')) db.exec('ALTER TABLE slides ADD COLUMN notes TEXT');
 
 const now = () => Date.now();
 const newKey = () => crypto.randomBytes(12).toString('base64url');
@@ -121,9 +132,14 @@ const stmt = {
 
   deleteSlides: db.prepare('DELETE FROM slides WHERE session_code = ?'),
   upsertSlide: db.prepare(
-    'INSERT INTO slides (session_code, idx, object_id, title, image) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_code, idx) DO UPDATE SET object_id = excluded.object_id, title = excluded.title, image = excluded.image'
+    'INSERT INTO slides (session_code, idx, object_id, title, image, notes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_code, idx) DO UPDATE SET object_id = excluded.object_id, title = excluded.title, image = excluded.image, notes = excluded.notes'
   ),
-  listSlides: db.prepare('SELECT idx, object_id, title, image FROM slides WHERE session_code = ? ORDER BY idx'),
+  listSlides: db.prepare('SELECT idx, object_id, title, image, notes FROM slides WHERE session_code = ? ORDER BY idx'),
+  getSlide: db.prepare('SELECT idx, object_id, title, image, notes FROM slides WHERE session_code = ? AND idx = ?'),
+  getTranslation: db.prepare('SELECT text, source_hash FROM translations WHERE session_code = ? AND slide_idx = ? AND lang = ?'),
+  putTranslation: db.prepare(
+    'INSERT INTO translations (session_code, slide_idx, lang, source_hash, text, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_code, slide_idx, lang) DO UPDATE SET source_hash = excluded.source_hash, text = excluded.text, created_at = excluded.created_at'
+  ),
 
   insertVote: db.prepare(
     'INSERT OR IGNORE INTO votes (session_code, slide_idx, student_id, kind, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -199,12 +215,18 @@ export const Sessions = {
   remove: (code) => stmt.deleteSession.run(code),
   replaceSlides: db.transaction((code, slides) => {
     stmt.deleteSlides.run(code);
-    for (const s of slides) stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null);
+    for (const s of slides) stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null);
   }),
   upsertSlide(code, s) {
-    stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null);
+    stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null);
   },
   slides: (code) => stmt.listSlides.all(code),
+  slide: (code, idx) => stmt.getSlide.get(code, idx),
+};
+
+export const Translations = {
+  get: (code, idx, lang) => stmt.getTranslation.get(code, idx, lang),
+  put: (code, idx, lang, hash, text) => stmt.putTranslation.run(code, idx, lang, hash, text, now()),
 };
 
 export const Votes = {

@@ -69,6 +69,8 @@ It asks only for the `presentations.readonly` scope.
 | `DATA_DIR` | Where `app.sqlite` and slide images live (default `./data`, `/data` in Docker). |
 | `DEMO_MODE` | `1` enables "Try a demo deck". |
 | `THUMBNAIL_SIZE` | `SMALL`, `MEDIUM` (default, 800 px) or `LARGE` (1600 px). |
+| `GOOGLE_TRANSLATE_API_KEY`, `DEEPL_API_KEY`, `ANTHROPIC_API_KEY` | One of these enables speaker-note translation (see below). |
+| `TRANSLATE_PROVIDER`, `NOTES_LANGUAGE`, `CLAUDE_MODEL` | Translation tuning (see below). |
 
 ## Deploy with Docker
 
@@ -80,6 +82,33 @@ docker compose up -d --build
 The container listens on port 3000 and keeps its data in the `slide-pulse-data` volume.
 Put it behind any HTTPS reverse proxy (Caddy, nginx, Fly.io, Railway, Render, …) and set `BASE_URL` to
 the public https URL. WebSockets must be passed through (`/ws`); Caddy and most platforms do this by default.
+
+## Speaker notes in the student's language
+
+Each slide's **speaker notes** are imported with the deck and shown on the student page under the
+slide. Students pick their language from a menu in the header; the buttons and labels switch
+immediately, and the notes are translated on demand. Each translation is done once per slide and
+language and cached, so a 40-slide deck read in Romanian costs 40 short translations, total.
+
+Languages offered: English (original), Spanish, Chinese (Simplified), Hindi, Arabic, French,
+Portuguese, Bengali, Russian, Urdu, Indonesian, German, Japanese, Romanian. Arabic and Urdu are
+shown right-to-left.
+
+Translation needs one API key. Set exactly one of these in `.env`:
+
+| Provider | Variable | Notes |
+|---|---|---|
+| Google Cloud Translation | `GOOGLE_TRANSLATE_API_KEY` | In the same Google Cloud project as your OAuth client: enable **Cloud Translation API**, create an **API key** under Credentials. Google requires billing to be enabled on the project; the first 500k characters per month are free. All 14 languages. |
+| DeepL | `DEEPL_API_KEY` | Free plan at deepl.com/pro-api (500k characters/month). Keys ending in `:fx` use the free endpoint automatically. No Hindi, Bengali or Urdu. |
+| Claude | `ANTHROPIC_API_KEY` | Uses the Claude API (`claude-opus-5` by default; set `CLAUDE_MODEL` to change). All 14 languages, best at keeping teaching tone and technical terms. |
+
+Without a key, notes are shown untranslated and the language menu still switches the interface.
+`TRANSLATE_PROVIDER` forces a provider; `NOTES_LANGUAGE` tells the translator what language your
+notes are written in (default English). In `DEMO_MODE` a fake "[Română] …" translator is used so
+the flow can be tried without any key.
+
+Notes are read once at import. If you edit them in Google Slides, click **Re-import slides**; the
+cache notices the change and re-translates only the slides whose notes changed.
 
 ## Two (or more) instructors
 
