@@ -42,7 +42,9 @@
   dialog#lang-dialog::backdrop { background: rgba(0,0,0,.45); }
   .lang-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 60dvh; overflow-y: auto; }
   .lang-grid button { justify-content: flex-start; gap: 10px; min-height: 52px; font-weight: 600; }
-  .lang-grid button .flag { font-size: 1.6rem; line-height: 1; }
+  .flag-img { width: 30px; height: 20px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.18); object-fit: cover; flex: none; display: inline-block; vertical-align: middle; }
+  .lang-grid button .flag-img { width: 36px; height: 24px; }
+  #lang-btn .flag-img, #notes-lang-btn .flag-img { width: 27px; height: 18px; }
   .lang-grid button.active { border-color: var(--accent); background: var(--great-soft); color: var(--accent); }
 </style>
 </head>
@@ -51,7 +53,7 @@
   <header>
     <h1 id="title">Connecting…</h1>
     <div class="row" style="flex:none; gap:6px">
-      <button id="lang-btn" class="btn-sm" aria-haspopup="dialog" title="Language" style="gap:6px; padding:4px 10px"><span id="lang-flag" style="font-size:1.3rem; line-height:1">🌐</span><span id="lang-code" class="tiny" style="font-weight:700"></span></button>
+      <button id="lang-btn" class="btn-sm" aria-haspopup="dialog" title="Language" style="gap:6px; padding:4px 10px"><span id="lang-flag">🌐</span><span id="lang-code" class="tiny" style="font-weight:700"></span></button>
       <span id="conn" class="pill">…</span>
     </div>
   </header>
@@ -83,7 +85,7 @@
         <b data-i18n="notes">Speaker notes</b>
         <div class="row" style="gap:6px">
           <span class="tiny" id="notes-meta"></span>
-          <button id="notes-lang-btn" class="btn-sm" aria-haspopup="dialog" title="Read notes in another language" style="gap:6px; padding:2px 8px; min-height:30px"><span id="notes-lang-flag" style="font-size:1.1rem; line-height:1">🌐</span><span id="notes-lang-code" class="tiny" style="font-weight:700"></span></button>
+          <button id="notes-lang-btn" class="btn-sm" aria-haspopup="dialog" title="Read notes in another language" style="gap:6px; padding:2px 8px; min-height:30px"><span id="notes-lang-flag">🌐</span><span id="notes-lang-code" class="tiny" style="font-weight:700"></span></button>
         </div>
       </div>
       <div id="notes-text" style="white-space:pre-wrap; word-break:break-word; margin-top:6px; font-size:.95rem"></div>
@@ -141,27 +143,28 @@ function applyStrings() {
 }
 
 let pickerMode = 'ui'; // 'ui' = app language, 'notes' = reading language for notes and replies
+const flagImg = (l) => (l?.flag ? `<img class="flag-img" src="/flags/${l.flag}.svg" alt="" loading="lazy">` : '🌐');
 function renderLangPicker() {
-  const langs = session?.translation?.languages || [{ code: 'en', native: 'English', flag: '🇺🇸' }];
+  const langs = session?.translation?.languages || [{ code: 'en', native: 'English', flag: 'us' }];
   if (!langs.find((l) => l.code === lang)) lang = session?.translation?.source || 'en';
   if (notesLang && !langs.find((l) => l.code === notesLang)) notesLang = null;
   const current = langs.find((l) => l.code === lang);
-  $('#lang-flag').textContent = current?.flag || '🌐';
+  $('#lang-flag').innerHTML = flagImg(current);
   $('#lang-code').textContent = lang.toUpperCase();
   $('#lang-btn').title = current?.native || 'Language';
   const reading = langs.find((l) => l.code === readLang());
-  $('#notes-lang-flag').textContent = reading?.flag || '🌐';
+  $('#notes-lang-flag').innerHTML = flagImg(reading);
   $('#notes-lang-code').textContent = readLang().toUpperCase();
   $('#notes-lang-btn').title = reading?.native || '';
 
   const selected = pickerMode === 'notes' ? readLang() : lang;
   $('#lang-title').textContent = t(lang, pickerMode === 'notes' ? 'notesLanguage' : 'language');
   const same = pickerMode === 'notes'
-    ? `<button type="button" data-lang="" class="${notesLang ? '' : 'active'}" style="grid-column: 1 / -1"><span class="flag" aria-hidden="true">${current?.flag || '🌐'}</span><span>${t(lang, 'sameAsApp')}</span></button>`
+    ? `<button type="button" data-lang="" class="${notesLang ? '' : 'active'}" style="grid-column: 1 / -1">${flagImg(current)}<span>${t(lang, 'sameAsApp')}</span></button>`
     : '';
   $('#lang-grid').innerHTML = same + langs.map((l) => `
     <button type="button" data-lang="${l.code}" class="${l.code === selected && (pickerMode === 'ui' || notesLang) ? 'active' : ''}" lang="${l.code}">
-      <span class="flag" aria-hidden="true">${l.flag || '🌐'}</span><span>${escapeHtml(l.native)}</span>
+      ${flagImg(l)}<span>${escapeHtml(l.native)}</span>
     </button>`).join('');
 }
 const dlg = $('#lang-dialog');
