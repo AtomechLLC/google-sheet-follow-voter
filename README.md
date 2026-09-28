@@ -18,6 +18,7 @@ Live, anonymous, slide-by-slide feedback for Google Slides presentations.
 | Dashboard | `/t/CODE?key=…` | Instructors (owner or invited co-instructors): current slide, Prev/Next (also ← → keys), QR code, per-slide totals, question feed |
 | Student | `/s/CODE` | Students: follows your current slide, three feedback buttons, can browse back to earlier slides |
 | Projected results | `/p/CODE` | Anyone: a bar per slide, top-slide summary, optional question list for the projector |
+| Phone remote | `/r/CODE?key=…` | Instructors: a clicker with Prev/Next, live counts, and thumbnails |
 
 Votes are stored per anonymous device id (random, kept in the phone's local storage), so each student
 counts once per slide and can change their mind. "Great" and "Didn't understand" are mutually exclusive.
@@ -138,6 +139,22 @@ Any number of instructors can drive the same presentation.
 - With the Chrome extension, each instructor pairs their own browser using the invite link (or the
   owner link). Set your name in the popup so changes are attributed. When a colleague is presenting
   from their laptop, tick **Pause** in your popup so your open copy of the deck doesn't fight theirs.
+
+### Letting a co-instructor drive Google Slides itself
+
+By default a co-instructor's Prev/Next moves the slide on student phones but not in Google Slides on
+the presenting laptop. To let them drive the real presentation:
+
+1. On the presenting laptop, open the extension popup and tick **Remote control**.
+2. Present as usual. The extension now also listens to the session: when anyone changes the slide
+   from a dashboard or the phone remote, it moves your Google Slides to that slide (it sends arrow
+   keys to the presentation, and reloads to the exact slide if that doesn't take). A badge says who
+   moved it.
+3. The co-instructor drives from their dashboard (arrow keys) or from the **phone remote**:
+   `/r/CODE?key=…`, copied with the "Copy phone remote link" button on the dashboard. It shows the
+   current slide, big Prev/Next buttons, live counts for that slide, and a thumbnail strip to jump.
+
+The presenter can still click through normally; both directions stay in sync.
 
 ## Chrome extension: phones follow Google Slides automatically
 

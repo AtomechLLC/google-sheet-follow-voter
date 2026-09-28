@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Remote · Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { display: flex; flex-direction: column; min-height: 100dvh; }
+  .wrap { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  header h1 { font-size: 1.05rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pos { text-align: center; font-weight: 800; font-size: 1.4rem; }
+  .by { text-align: center; }
+  .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pad button { min-height: 110px; font-size: 2rem; border-width: 2px; border-radius: 16px; justify-content: center; }
+  .pad button.next { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { border-radius: 10px; padding: 8px 10px; border: 1px solid var(--border); text-align: center; }
+  .stat .n { font-size: 1.4rem; font-weight: 800; line-height: 1.1; }
+  .stat .l { font-size: .72rem; color: var(--text-2); }
+  .stat.great { background: var(--great-soft); } .stat.confused { background: var(--confused-soft); } .stat.question { background: var(--question-soft); }
+  .thumbs { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0; }
+  .thumbs button { flex: none; padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; min-height: 0; position: relative; }
+  .thumbs button.current { border-color: var(--accent); }
+  .thumbs img { display: block; width: 84px; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px; background: #fff; }
+  .thumbs .n { position: absolute; left: 4px; bottom: 2px; font-size: .7rem; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">Connecting…</h1>
+    <span id="conn" class="pill">…</span>
+  </header>
+  <div class="slide-frame" id="frame"></div>
+  <div class="pos" id="pos">–</div>
+  <div class="tiny by" id="by"></div>
+  <div class="pad">
+    <button id="prev" aria-label="Previous slide">◀</button>
+    <button id="next" class="next" aria-label="Next slide">▶</button>
+  </div>
+  <div class="counts">
+    <div class="stat great"><div class="n" id="c-great">0</div><div class="l">👍 Great</div></div>
+    <div class="stat confused"><div class="n" id="c-confused">0</div><div class="l">🤔 Didn't understand</div></div>
+    <div class="stat question"><div class="n" id="c-question">0</div><div class="l">❓ Open questions</div></div>
+  </div>
+  <div class="thumbs" id="thumbs"></div>
+  <p class="tiny" style="text-align:center; margin:0">Moves the slide on student phones and, with the Chrome extension in remote mode, in Google Slides on the presenting laptop. <a id="dash" href="#">Open full dashboard</a></p>
+</div>
+<script type="module">
+import { $, api, toast, connectLive, codeFromPath, escapeHtml, timeAgo } from '/common.js';
+const code = location.pathname.match(/\/r\/([A-Za-z0-9]+)/)?.[1]?.toUpperCase();
+const key = new URLSearchParams(location.search).get('key') || '';
+const headers = { 'x-session-key': key };
+const NAME_KEY = 'slidepulse.instructorName';
+let myName = '';
+try { myName = localStorage.getItem(NAME_KEY) || ''; } catch {}
+if (!myName) { myName = (prompt('Your name, shown to the other instructors:', '') || '').trim().slice(0, 40) || 'Instructor'; try { localStorage.setItem(NAME_KEY, myName); } catch {} }
+
+let session = null, results = { counts: {} };
+try { await api(`/api/sessions/${code}/teacher`, { headers }); }
+catch (err) { document.body.innerHTML = `<div class="wrap"><div class="card"><h1>Can't open remote</h1><p>${escapeHtml(err.message)}</p></div></div>`; throw err; }
+$('#dash').href = `/t/${code}?key=${encodeURIComponent(key)}`;
+
+connectLive({
+  code, role: 'teacher', key, name: myName,
+  onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting…'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
+  onMessage: (msg) => {
+    if (msg.type === 'session') { session = msg.session; render(); }
+    if (msg.type === 'results') { results = msg.results; render(); }
+  },
+});
+const countsFor = (i) => results.counts[i] || { great: 0, confused: 0, question: 0, open: 0 };
+function render() {
+  if (!session) return;
+  $('#title').textContent = session.title;
+  const slide = session.slides[session.currentSlide];
+  $('#frame').innerHTML = slide?.image ? `<img src="${slide.image}" alt="">` : '<span>No slide</span>';
+  $('#pos').textContent = session.slideCount ? `Slide ${session.currentSlide + 1} of ${session.slideCount}` : 'No slides';
+  $('#by').textContent = session.changedBy && session.changedBy !== myName ? `Set by ${session.changedBy} · ${timeAgo(session.changedAt)}` : '';
+  $('#prev').disabled = session.currentSlide <= 0;
+  $('#next').disabled = session.currentSlide >= session.slideCount - 1;
+  const c = countsFor(session.currentSlide);
+  $('#c-great').textContent = c.great; $('#c-confused').textContent = c.confused; $('#c-question').textContent = c.open;
+  $('#thumbs').innerHTML = session.slides.map((s) => `<button data-go="${s.idx}" class="${s.idx === session.currentSlide ? 'current' : ''}">${s.image ? `<img src="${s.image}" alt="">` : ''}<span class="n">${s.idx + 1}</span></button>`).join('');
+  $('#thumbs .current')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+async function goTo(idx) {
+  if (!session || idx < 0 || idx >= session.slideCount) return;
+  session.currentSlide = idx; session.changedBy = myName; render();
+  if (navigator.vibrate) navigator.vibrate(10);
+  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName }, headers }); }
+  catch (err) { toast(err.message); }
+}
+$('#prev').addEventListener('click', () => goTo(session.currentSlide - 1));
+$('#next').addEventListener('click', () => goTo(session.currentSlide + 1));
+$('#thumbs').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goTo(Number(b.dataset.go)); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goTo(session.currentSlide + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(session.currentSlide - 1); }
+});
+</script>
+</body>
+</html>

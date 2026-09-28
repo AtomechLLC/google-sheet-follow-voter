@@ -18,6 +18,7 @@ export function publicState(code) {
     translation: translationInfo(),
     slides: Sessions.slides(code).map((sl) => ({
       idx: sl.idx,
+      objectId: sl.object_id,
       title: sl.title,
       image: sl.image ? `/slides/${code}/${sl.image}` : null,
       notes: sl.notes || null,

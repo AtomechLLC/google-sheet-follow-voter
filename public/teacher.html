@@ -62,6 +62,7 @@
     </div>
     <div class="row">
       <a id="present-link" class="btn btn-sm" target="_blank" rel="noopener">Projected results ↗</a>
+      <button id="copy-remote" class="btn-sm" title="A phone-sized clicker: Prev/Next and live counts">Copy phone remote link</button>
       <button id="copy-student" class="btn-sm">Copy student link</button>
       <button id="invite" class="btn-sm" title="Co-instructors can change slides and see results, but not delete or re-import">Invite co-instructor</button>
       <button id="reimport" class="btn-sm" title="Fetch the slides again after you edit the deck">Re-import slides</button>
@@ -124,6 +125,7 @@
             <li>In Chrome open <code>chrome://extensions</code>, switch on <b>Developer mode</b>, click <b>Load unpacked</b>, and choose the unzipped folder.</li>
             <li>Click the extension icon, paste this dashboard link, and click <b>Pair</b>.</li>
             <li>Present from Google Slides as usual. Phones follow automatically.</li>
+            <li>Tick <b>Remote control</b> in the extension popup if a co-instructor should be able to move your Google Slides from their dashboard or phone remote.</li>
           </ol>
           <div class="row">
             <a class="btn btn-sm" href="/extension.zip" download>Download extension</a>
@@ -189,6 +191,7 @@ if (info.role !== 'owner') {
   $('#title').insertAdjacentHTML('afterend', '<span class="pill">co-instructor</span>');
 }
 $('#invite').addEventListener('click', () => copyText(info.cohostUrl));
+$('#copy-remote').addEventListener('click', () => copyText(info.remoteUrl));
 $('#qr').src = `/api/sessions/${code}/qr.svg`;
 $('#join-url').textContent = info.studentUrl.replace(/^https?:\/\//, '');
 $('#code').textContent = code;

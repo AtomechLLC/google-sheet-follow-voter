@@ -8,12 +8,14 @@ function render(sessions) {
 }
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, instructorName: '' }, (v) => {
+chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: false, instructorName: '' }, (v) => {
   render(v.sessions);
   $('#editor').checked = Boolean(v.followInEditor);
   $('#paused').checked = Boolean(v.paused);
+  $('#remote').checked = Boolean(v.remote);
   $('#name').value = v.instructorName || '';
 });
+$('#remote').addEventListener('change', () => chrome.storage.sync.set({ remote: $('#remote').checked }));
 
 $('#editor').addEventListener('change', () => chrome.storage.sync.set({ followInEditor: $('#editor').checked }));
 $('#paused').addEventListener('change', () => chrome.storage.sync.set({ paused: $('#paused').checked }));

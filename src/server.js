@@ -106,6 +106,7 @@ app.get('/', page('index.html'));
 app.get('/t/:code', page('teacher.html'));
 app.get('/s/:code', page('student.html'));
 app.get('/p/:code', page('present.html'));
+app.get('/r/:code', page('remote.html'));
 app.get('/join', (req, res) => {
   const code = String(req.query.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   res.redirect(code ? `/s/${code}` : '/');
@@ -182,6 +183,7 @@ function sessionSummary(s, role = 'owner') {
     teacherUrl: `${config.baseUrl}/t/${s.code}?key=${role === 'owner' ? s.key : s.cohost_key}`,
     cohostUrl: role === 'owner' ? `${config.baseUrl}/t/${s.code}?key=${s.cohost_key}` : undefined,
     presentUrl: `${config.baseUrl}/p/${s.code}`,
+    remoteUrl: `${config.baseUrl}/r/${s.code}?key=${role === 'owner' ? s.key : s.cohost_key}`,
   };
 }
 
