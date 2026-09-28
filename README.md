@@ -142,14 +142,14 @@ Any number of instructors can drive the same presentation.
 
 ### Letting a co-instructor drive Google Slides itself
 
-By default a co-instructor's Prev/Next moves the slide on student phones but not in Google Slides on
-the presenting laptop. To let them drive the real presentation:
+Google Slides on the presenting laptop can only be moved by something running on that laptop, so
+this needs the extension there. With it installed and paired, **Remote control** is on by default:
 
-1. On the presenting laptop, open the extension popup and tick **Remote control**.
-2. Present as usual. The extension now also listens to the session: when anyone changes the slide
-   from a dashboard or the phone remote, it moves your Google Slides to that slide (it sends arrow
-   keys to the presentation, and reloads to the exact slide if that doesn't take). A badge says who
-   moved it.
+1. On the presenting laptop, present as usual and walk away if you need to.
+2. The extension listens to the session: when anyone changes the slide from a dashboard or the
+   phone remote, it moves your Google Slides to that slide (it sends arrow keys to the presentation,
+   and reloads to the exact slide if that doesn't take). A badge says who moved it. Untick
+   **Remote control** in the popup if you ever want your laptop to ignore other instructors.
 3. The co-instructor drives from their dashboard (arrow keys) or from the **phone remote**:
    `/r/CODE?key=…`, copied with the "Copy phone remote link" button on the dashboard. It shows the
    current slide, big Prev/Next buttons, live counts for that slide, and a thumbnail strip to jump.

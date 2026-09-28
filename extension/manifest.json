@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Slide Pulse Follower",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Keeps Slide Pulse student phones in sync with the slide you are presenting in Google Slides.",
   "permissions": [
     "storage"

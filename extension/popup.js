@@ -8,7 +8,7 @@ function render(sessions) {
 }
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: false, instructorName: '' }, (v) => {
+chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: true, instructorName: '' }, (v) => {
   render(v.sessions);
   $('#editor').checked = Boolean(v.followInEditor);
   $('#paused').checked = Boolean(v.paused);

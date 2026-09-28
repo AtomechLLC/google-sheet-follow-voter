@@ -5,7 +5,7 @@
   let sessions = [];          // [{ server, code, key, presentationId, title }]
   let followInEditor = false;
   let paused = false;
-  let remote = false;         // follow the session: co-instructors can move this Google Slides tab
+  let remote = true;          // follow the session: co-instructors can move this Google Slides tab (default on)
   let instructorName = '';
   let socket = null;
   let socketKey = '';         // which session the socket belongs to
@@ -17,7 +17,7 @@
   let badge = null;
 
   function loadSettings() {
-    chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: false, instructorName: '' }, (v) => {
+    chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: true, instructorName: '' }, (v) => {
       sessions = v.sessions || [];
       followInEditor = Boolean(v.followInEditor);
       paused = Boolean(v.paused);
