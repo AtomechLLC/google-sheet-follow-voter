@@ -14,7 +14,7 @@ import {
   importPresentation,
   createDemoSlides,
 } from './google.js';
-import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults } from './live.js';
+import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults, liveSessions } from './live.js';
 import { zipDirectory } from './zip.js';
 import { translateText, translateBetween, translationInfo, provider as translationProvider } from './translate.js';
 import { byCode } from './languages.js';
@@ -203,6 +203,28 @@ app.get('/api/me', (req, res) => {
     baseUrl: config.baseUrl,
     sessions: t ? Sessions.listForTeacher(t.id).map((row) => sessionSummary(row, row.role)) : [],
   });
+});
+
+/** Presentations happening right now, for the home page. Public: title, code and counts only. */
+app.get('/api/live', (req, res) => {
+  const rows = [];
+  for (const live of liveSessions()) {
+    const s = Sessions.get(live.code);
+    if (!s || s.status !== 'ready') continue;
+    rows.push({
+      code: s.code,
+      title: s.title,
+      currentSlide: s.current_slide,
+      slideCount: s.slide_count,
+      students: live.students,
+      instructors: live.instructors,
+      changedAt: s.changed_at,
+      studentUrl: studentUrl(s.code),
+    });
+  }
+  rows.sort((a, b) => (b.changedAt || 0) - (a.changedAt || 0));
+  res.set('Cache-Control', 'no-store');
+  res.json({ live: rows });
 });
 
 app.post('/api/sessions', async (req, res) => {

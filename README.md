@@ -14,7 +14,7 @@ Live, anonymous, slide-by-slide feedback for Google Slides presentations.
 
 | Page | URL | Who |
 |---|---|---|
-| Home | `/` | Teacher: sign in, paste a deck link, list past presentations |
+| Home | `/` | Everyone: "Live now" list of running presentations with Join buttons and a code box. Teacher: sign in, paste a deck link, list past presentations |
 | Dashboard | `/t/CODE?key=…` | Instructors (owner or invited co-instructors): current slide, Prev/Next (also ← → keys), QR code, per-slide totals, question feed |
 | Student | `/s/CODE` | Students: follows your current slide, three feedback buttons, can browse back to earlier slides |
 | Projected results | `/p/CODE` | Anyone: a bar per slide, top-slide summary, optional question list for the projector |

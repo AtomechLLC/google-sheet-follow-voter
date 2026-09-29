@@ -15,6 +15,8 @@
   .session-list { list-style: none; margin: 0; padding: 0; }
   .session-list li { padding: 12px 0; border-top: 1px solid var(--border); }
   .session-list li:first-child { border-top: 0; }
+  .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--great); display: inline-block; margin-right: 6px; box-shadow: 0 0 0 3px var(--great-soft); }
+  .live-code { font-family: ui-monospace, monospace; font-weight: 800; letter-spacing: .08em; }
 </style>
 </head>
 <body>
@@ -33,6 +35,17 @@
   </div>
 
   <div id="error" class="card" style="display:none; border-color: var(--danger)"></div>
+
+  <div id="live-card" class="card stack">
+    <div class="row spread">
+      <h2 style="margin:0">Live now <span id="live-count" class="pill"></span></h2>
+      <form id="join-form" class="row" style="gap:6px" autocomplete="off">
+        <input id="join-code" type="text" placeholder="Code" maxlength="8" style="width:110px; text-transform:uppercase; letter-spacing:.08em; font-weight:700" aria-label="Join code">
+        <button class="btn-sm btn-primary" type="submit">Join</button>
+      </form>
+    </div>
+    <ul class="session-list" id="live-list"><li class="muted">No presentation is running right now.</li></ul>
+  </div>
 
   <div id="signed-out" class="card stack" style="display:none">
     <h2>Get started</h2>
@@ -67,7 +80,7 @@
 </div>
 
 <script type="module">
-import { $, api, toast, escapeHtml, copyText } from '/common.js';
+import { $, $$, api, toast, escapeHtml, copyText } from '/common.js';
 
 const params = new URLSearchParams(location.search);
 if (params.get('error')) {
@@ -75,6 +88,33 @@ if (params.get('error')) {
   el.style.display = '';
   el.textContent = `Sign-in failed: ${params.get('error')}`;
 }
+
+// ---- Live now: presentations with an instructor connected, refreshed every few seconds ----
+let liveCodes = new Set();
+async function renderLive() {
+  try {
+    const { live } = await api('/api/live');
+    liveCodes = new Set(live.map((l) => l.code));
+    $('#live-count').textContent = live.length ? `${live.length}` : '';
+    $('#live-list').innerHTML = live.map((l) => `
+      <li class="row spread">
+        <div class="grow">
+          <div><span class="live-dot" aria-hidden="true"></span><b>${escapeHtml(l.title)}</b> <span class="live-code">${l.code}</span></div>
+          <div class="tiny">Slide ${l.currentSlide + 1} of ${l.slideCount} · ${l.students} phone${l.students === 1 ? '' : 's'} connected</div>
+        </div>
+        <a class="btn btn-sm btn-primary" href="/s/${l.code}">Join</a>
+      </li>`).join('') || '<li class="muted">No presentation is running right now.</li>';
+    for (const el of $$('[data-live-code]')) el.style.display = liveCodes.has(el.dataset.liveCode) ? '' : 'none';
+  } catch {}
+}
+renderLive();
+setInterval(renderLive, 8000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') renderLive(); });
+$('#join-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = $('#join-code').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code) location.href = `/s/${code}`;
+});
 
 const me = await api('/api/me');
 
@@ -100,6 +140,7 @@ function renderSessions(sessions) {
     <li class="row spread">
       <div class="grow">
         <div><b>${escapeHtml(s.title)}</b> <span class="pill">${s.code}</span>
+          <span class="pill ok" data-live-code="${s.code}" style="display:${liveCodes.has(s.code) ? '' : 'none'}">live</span>
           ${s.role === 'cohost' ? '<span class="pill">co-instructor</span>' : ''}
           ${s.status === 'importing' ? '<span class="pill warn">importing</span>' : ''}
           ${s.status === 'error' ? `<span class="pill err" title="${escapeHtml(s.statusMessage || '')}">import failed</span>` : ''}

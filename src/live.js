@@ -76,6 +76,21 @@ export function extensionsOnline(code) {
   return out;
 }
 
+/** Sessions with an instructor connected right now (dashboard, phone remote or the Slides extension). */
+export function liveSessions() {
+  const out = [];
+  for (const [code, room] of rooms) {
+    let instructors = 0, students = 0;
+    for (const ws of room) {
+      if (ws.readyState !== ws.OPEN) continue;
+      if (ws.role === 'teacher') instructors++;
+      else if (ws.role === 'student') students++;
+    }
+    if (instructors) out.push({ code, instructors, students });
+  }
+  return out;
+}
+
 export function broadcastPresence(code) {
   broadcast(code, (ws) => ws.role === 'teacher', () => ({ type: 'presence', instructors: instructorsOnline(code), extensions: extensionsOnline(code) }));
 }
