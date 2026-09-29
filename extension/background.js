@@ -84,8 +84,53 @@ const attachedTargets = new Set();
 
 const evalIn = (id, expression) => send(id, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).then((r) => r?.result?.value);
 
-// Click "Slide N" in the presenter view's slide list. Works with the list open or closed:
-// tries the item directly, and if none is found opens the current-slide control first.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Trusted click at page coordinates inside the target. */
+async function clickAt(id, x, y) {
+  await send(id, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await send(id, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await send(id, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+
+/** Centre of the presenter view's "Slide selector" listbox, or null. */
+const SELECTOR_RECT_JS = `(() => {
+  const el = document.querySelector('[role="listbox"][aria-label="Slide selector"]');
+  if (!el) return null;
+  el.scrollIntoView({ block: 'center' });
+  const b = el.getBoundingClientRect();
+  return b.width && b.height ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null;
+})()`;
+
+/** Centre of the "Slide N" entry in the open selector menu, or null. */
+const OPTION_RECT_JS = (n) => `(() => {
+  const re = new RegExp('^\\s*Slide ' + ${n} + '(\\b|:)');
+  const items = Array.from(document.querySelectorAll('.goog-menuitem, [role="option"], [role="menuitem"]'))
+    .filter((e) => !e.closest('[aria-label="Slide selector"]') && re.test((e.textContent || '').trim()));
+  const el = items.find((e) => e.getBoundingClientRect().height > 0) || null;
+  if (!el) return null;
+  el.scrollIntoView({ block: 'center' });
+  const b = el.getBoundingClientRect();
+  return { x: b.x + Math.min(40, b.width / 2), y: b.y + b.height / 2 };
+})()`;
+
+/** Jump using presenter view's own Slide selector (exact, Google numbering). */
+async function presenterSelectorJump(id, n) {
+  const sel = await evalIn(id, SELECTOR_RECT_JS);
+  if (!sel) return 'no Slide selector';
+  await clickAt(id, sel.x, sel.y);
+  let opt = null;
+  for (let i = 0; i < 8 && !opt; i++) { await sleep(150); opt = await evalIn(id, OPTION_RECT_JS(n)); }
+  if (!opt) {
+    await send(id, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await send(id, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    return `no "Slide ${n}" entry in the Slide selector`;
+  }
+  await clickAt(id, opt.x, opt.y);
+  return true;
+}
+
+// Fallback: click "Slide N" wherever it appears in the presenter view (older layouts).
 const PRESENTER_JUMP_JS = (n) => `(() => {
   const label = new RegExp('^\\s*Slide ' + ${n} + '(\\b|:)');
   const items = () => Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], li, div, span')).filter((e) => e.children.length <= 3 && label.test(e.textContent || ''));
@@ -113,7 +158,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const target = await findPresenterTarget();
       if (!target) return sendResponse({ ok: false, reason: 'none' });
-      const result = await withTarget(target, (id) => evalIn(id, PRESENTER_JUMP_JS(Number(msg.number))));
+      const result = await withTarget(target, async (id) => {
+        const viaSelector = await presenterSelectorJump(id, Number(msg.number));
+        if (viaSelector === true) return true;
+        const viaText = await evalIn(id, PRESENTER_JUMP_JS(Number(msg.number)));
+        return viaText === true ? true : `${viaSelector}; ${viaText}`;
+      });
       sendResponse(result === true ? { ok: true } : { ok: false, reason: String(result) });
     })().catch((err) => sendResponse({ ok: false, reason: err.message }));
     return true;

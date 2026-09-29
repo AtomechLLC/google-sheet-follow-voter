@@ -28,6 +28,11 @@
   function currentInfo() {
     const info = parseSlidesUrl(location.href);
     if (!info) return null;
+    // Presenter view (speaker notes) is a /present?token=… page titled "Presenter view - …".
+    if (!info.presenterView && (/^presenter view\b/i.test(document.title) || document.querySelector('.punch-viewer-speakernotes-body'))) {
+      info.presenterView = true;
+      info.mode = 'present';
+    }
     let why = info.mode === 'present' ? 'url' : null;
     if (!why && document.fullscreenElement) why = 'fullscreen';
     if (!why && document.querySelector('.punch-viewer-content, .punch-viewer-container, .punch-viewer-svgpage, .punch-present-iframe, [class*="punch-viewer-"]')) why = 'viewer';
@@ -177,7 +182,7 @@
   if (channel) {
     channel.onmessage = (e) => { if (e.data?.presentationId === parseSlidesUrl(location.href)?.presentationId) presenterSeenAt = Date.now(); };
     setInterval(() => {
-      const info = parseSlidesUrl(location.href);
+      const info = currentInfo();
       if (info?.presenterView) channel.postMessage({ presentationId: info.presentationId });
     }, 1000);
   }
@@ -191,6 +196,7 @@
     const target = latestTarget;
     const objectId = slidesByIdx.get(target);
     if (!objectId) return;
+    if (info.presenterView) return; // the presenter-view window only announces itself; the slideshow window drives
     const here = info.objectId && !info.presenterView ? slidesById.get(info.objectId) : undefined;
     if (here === target) { lastJumped = target; return; }
     // A window that does not show the slide id in its URL (presenter view) acts on every new target.
