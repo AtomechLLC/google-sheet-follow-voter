@@ -28,6 +28,8 @@
   function currentInfo() {
     const info = parseSlidesUrl(location.href);
     if (!info) return null;
+    const shown = frameObjectId();
+    if (shown) info.objectId = shown;
     // Presenter view (speaker notes) is a /present?token=… page titled "Presenter view - …".
     if (!info.presenterView && (/^presenter view\b/i.test(document.title) || document.querySelector('.punch-viewer-speakernotes-body'))) {
       info.presenterView = true;
@@ -152,7 +154,7 @@
     url.search = new URLSearchParams({ code: session.code, role: 'teacher', key: session.key, name: `${instructorName || 'Presenter'} (Slides)`, ext: chrome.runtime.getManifest().version }).toString();
     const ws = new WebSocket(url);
     socket = ws;
-    ws.onopen = () => checkForUpdate(session);
+    ws.onopen = () => { checkForUpdate(session); syncDebuggerHold(); };
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type !== 'session' || !msg.session) return;
@@ -161,9 +163,10 @@
       numberByIdx = new Map(msg.session.slides.map((sl) => [sl.idx, sl.number || sl.idx + 1]));
       latestTarget = msg.session.currentSlide;
       latestState = msg.session;
-      // Coalesce bursts (someone holding the arrow key): act once on the newest target.
+      // Coalesce bursts (someone holding the arrow key): act once on the newest target. A move
+      // already under way notices the new target itself (see superseded()).
       clearTimeout(followTimer);
-      followTimer = setTimeout(followServer, 120);
+      followTimer = setTimeout(followServer, 40);
     };
     ws.onclose = () => {
       if (socket !== ws) return;
@@ -175,18 +178,26 @@
 
   let lastJumped = null; // target we last typed into this window (for windows whose URL has no slide id)
 
-  // The presenter-view window announces itself so the slideshow window never reloads while it is open
-  // (a reload breaks presenter view). Same origin, so a BroadcastChannel reaches both windows.
-  let presenterSeenAt = 0;
-  const channel = (() => { try { return new BroadcastChannel('slide-pulse-presenter'); } catch { return null; } })();
-  if (channel) {
-    channel.onmessage = (e) => { if (e.data?.presentationId === parseSlidesUrl(location.href)?.presentationId) presenterSeenAt = Date.now(); };
-    setInterval(() => {
-      const info = currentInfo();
-      if (info?.presenterView) channel.postMessage({ presentationId: info.presentationId });
-    }, 1000);
+  // Is a presenter-view window open? (Reloading the slideshow window would break it.) On real
+  // Google Slides presenter view is an about:blank popup where this script never runs, so ask the
+  // background worker, which finds it by its "Presenter view - …" title without attaching.
+  const presenterViewOpen = () => new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'hasPresenter' }, (res) => resolve(!chrome.runtime.lastError && Boolean(res?.open)));
+    } catch { resolve(false); }
+    setTimeout(() => resolve(false), 1000);
+  });
+
+  // Keep the debugger attached while this tab presents with remote control on (see background.js):
+  // Chrome's bar then appears once at the start instead of flashing over the slide on each move.
+  let debuggerHeld = false;
+  function syncDebuggerHold() {
+    const info = currentInfo();
+    const want = Boolean(socket && info && info.mode === 'present' && !info.presenterView);
+    if (want === debuggerHeld && !want) return;
+    debuggerHeld = want;
+    try { chrome.runtime.sendMessage({ type: 'holdDebugger', on: want }, () => void chrome.runtime.lastError); } catch {}
   }
-  const presenterViewOpen = () => Date.now() - presenterSeenAt < 3500;
 
   function followServer() {
     if (latestTarget === null || inflight) return;
@@ -221,21 +232,54 @@
     }
   }
 
-  /** Current slide id as Google reports it: the ?slide= query wins over the #slide= hash. */
+  /**
+   * The in-tab slideshow (newer Google Slides, URL stays /edit) is a same-origin
+   * iframe.punch-present-iframe whose own URL is a /present?…&slide=id.X page. On real Slides its
+   * ?slide= changes ~50 ms after the picture does, while the editor's address bar trails it by
+   * another ~200 ms, and the address bar can also move on its own (hash changes) while the
+   * slideshow stays put. So the iframe is the truth; the iframe is removed when the slideshow ends.
+   */
+  function frameObjectId() {
+    const f = document.querySelector('iframe.punch-present-iframe');
+    if (!f) return null;
+    try {
+      const raw = new URL(f.contentWindow.location.href).searchParams.get('slide') || '';
+      return raw.replace(/^id\./, '') || null;
+    } catch { return null; }
+  }
+
+  /** Current slide id: the in-tab slideshow's own URL, else the ?slide= query, else the #slide= hash. */
   function urlObjectId() {
+    const shown = frameObjectId();
+    if (shown) return shown;
     const u = new URL(location.href);
     const q = u.searchParams.get('slide');
     const raw = q || new URLSearchParams(u.hash.replace(/^#/, '')).get('slide') || '';
     return raw.replace(/^id\./, '') || null;
   }
 
-  /** Poll until the URL shows objectId and still does 0.9 s later, within ms. */
+  /** True once the session has asked for a different slide than the move in progress. */
+  const superseded = () => Boolean(navigating && !navigating.test && latestTarget !== null && latestTarget !== navigating.target);
+
+  /**
+   * Poll until the slideshow shows objectId and still does 500 ms later; gives up after ms without
+   * reaching it. Resolves 'superseded' as soon as a newer target arrives, so a phone tapping Next
+   * quickly is not queued behind each move's verification (the old wait held every move ~0.9 s on
+   * the in-tab slideshow and the projector fell further behind with each tap).
+   */
   const waitHold = (objectId, ms) => new Promise((resolve) => {
     const started = Date.now();
+    let reachedAt = 0;
     const poll = () => {
-      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 500);
-      if (Date.now() - started >= ms) return resolve(false);
-      setTimeout(poll, 100);
+      if (superseded()) return resolve('superseded');
+      if (urlObjectId() === objectId) {
+        reachedAt ||= Date.now();
+        if (Date.now() - reachedAt >= 500) return resolve(true);
+      } else {
+        reachedAt = 0;
+        if (Date.now() - started >= ms) return resolve(false);
+      }
+      setTimeout(poll, 25);
     };
     poll();
   });
@@ -281,8 +325,9 @@
     let prevDist = distance(lastSeen);
     logMove(`stepping with ${what} from slide ${startIdx === undefined ? '?' : startIdx + 1} (${dir > 0 ? 'forward' : 'back'}, max ${maxPresses} presses)`);
     while (presses < maxPresses) {
+      if (superseded()) return 'superseded';
       const now = urlObjectId();
-      if (now === objectId) { await new Promise((r) => setTimeout(r, 500)); return urlObjectId() === objectId; }
+      if (now === objectId) return waitHold(objectId, 0);
       if (now !== lastSeen) {
         stalled = 0; lastSeen = now;
         const d = distance(now);
@@ -355,10 +400,10 @@
     return stepToward(from, to, objectId, info, press, `"${(btnNext || btnPrev).getAttribute('aria-label') || 'control'}" clicks`);
   }
 
-  function navigateTo(from, to, objectId, info) {
-    navigating = { target: to, until: Date.now() + 8000 };
+  function navigateTo(from, to, objectId, info, test = false) {
+    navigating = { target: to, until: Date.now() + 8000, test };
     moveLog = [];
-    logMove(`move from ${from === undefined ? '?' : from + 1} to ${to + 1} (${info.presenterView ? 'presenter view' : info.mode}${presenterViewOpen() ? ', notes window open' : ''})`);
+    logMove(`move from ${from === undefined ? '?' : from + 1} to ${to + 1} (${info.presenterView ? 'presenter view' : info.mode}${frameObjectId() ? ', in-tab slideshow' : ''})`);
     const done = (moved) => {
       navigating = null;
       last = `${info.presentationId}:${objectId}`;
@@ -367,10 +412,18 @@
       if (onMoveDone) { const cb = onMoveDone; onMoveDone = null; cb(moved); }
       if (latestTarget !== to) followServer(); // the target moved on while we were busy
     };
-    const loadUrl = () => {
+    // A newer target arrived mid-move: drop this one (no fallbacks) and head for the newest.
+    const abandon = () => {
+      navigating = null;
+      logMove(`newer target (slide ${latestTarget + 1}) arrived; going there instead`);
+      followServer();
+      if (!navigating) setTimeout(followServer, 250); // e.g. a report was in flight: try again shortly
+    };
+    const loadUrl = async () => {
       const u = new URL(location.href);
       // Reloading would break presenter view, so only do it for a plain slideshow window.
-      if (info.presenterView || presenterViewOpen()) {
+      if (info.presenterView || (await presenterViewOpen())) {
+        logMove('presenter view is open: not reloading');
         showBadge(`Slide Pulse: could not move this window to slide ${to + 1}`, false);
         return done(false);
       }
@@ -393,76 +446,71 @@
     };
     if (info.mode !== 'present') return loadUrl();
 
-    // Quiet methods first: they need no debugger session, so Chrome shows no "started debugging" bar.
-    // Order: typed slide number (exact, one shot) -> real arrow-key stepping -> clicking Google's
-    // controls. (A URL hash change is NOT used on the in-tab slideshow: the editor follows it and
-    // rewrites the address bar while the slideshow on screen stays put.)
-    const afterTypingFailed = async () => {
-      const pv = await presenterJump(googleNumber);
-      if (pv === true) logMove(`clicked "Slide ${googleNumber}" in the presenter view list`);
-      if (pv === true && (await waitHold(objectId, 2500))) return done(true);
-      if (pv !== true && pv !== 'none') logMove(`presenter view list: ${pv}`);
-      if (await arrowSteps(from, to, objectId, info)) return done(true);
-      if (await clickSteps(from, to, objectId, info)) return done(true);
-      loadUrl();
-    };
-
+    // Order: one arrow press for Next/Previous -> typed slide number (exact, one shot) -> presenter
+    // view's slide list -> arrow-key stepping -> clicking Google's controls. (A URL hash change is
+    // NOT used on the in-tab slideshow: the editor follows it and rewrites the address bar while
+    // the slideshow on screen stays put.) Every wait gives way to a newer target.
     const googleNumber = numberByIdx.get(to) || to + 1; // what Google calls this slide (skipped slides count)
     const keys = [...String(googleNumber), 'Enter'];
     const oneStep = from !== undefined && Math.abs(to - from) === 1;
-    // Preferred: real keystrokes via the background worker (debugger protocol). If that is
-    // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
-    const typeSynthetic = () => {
-      logMove('typing with simulated DOM key events');
-      let i = 0;
-      const next = () => {
-        if (i < keys.length) {
-          const k = keys[i++];
-          k === 'Enter' ? pressKey('Enter', 'Enter', 13) : pressKey(k, `Digit${k}`, 48 + Number(k));
-          return setTimeout(next, 60);
-        }
-        started = Date.now();
-        setTimeout(verify, 150);
-      };
-      next();
-    };
-    const typeNext = async () => {
+    const noSlideInUrl = !info.objectId || info.presenterView; // nothing to verify against: trust the jump
+
+    const run = async () => {
       if (oneStep) {
-        // Next/Previous: one real arrow press, verified quickly; fall through to the typed number if it did not take.
-        const ok1 = await realKeys([to > from ? 'ArrowRight' : 'ArrowLeft']);
+        // Next/Previous: one real arrow press. On real Slides the picture changes ~130 ms after the
+        // press (~260 ms if the debugger had to attach first). If the slide has not changed by
+        // 700 ms (an animation build took the press, say), type the number instead; the typed
+        // number is absolute, so a late arrow press cannot make it overshoot.
+        const arrow = to > from ? 'ArrowRight' : 'ArrowLeft';
+        const ok1 = await realKeys([arrow]);
         if (ok1 === true) {
-          logMove(`pressed ${to > from ? 'ArrowRight' : 'ArrowLeft'} as a real keystroke`);
-          if (await waitHold(objectId, 1200)) return done(true);
-          // an animation build may have swallowed the press: try once more
-          await realKeys([to > from ? 'ArrowRight' : 'ArrowLeft']);
-          if (await waitHold(objectId, 1200)) return done(true);
+          logMove(`pressed ${arrow} as a real keystroke`);
+          const r = await waitHold(objectId, 700);
+          if (r === 'superseded') return abandon();
+          if (r) return done(true);
           logMove('arrow press did not reach the slide; typing the number');
         }
       }
+      if (superseded()) return abandon();
+      // Preferred: real keystrokes via the background worker (debugger protocol). If that is
+      // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
       const ok = await realKeys(keys);
-      if (ok !== true) {
+      if (ok === true) logMove(`typed "${keys.join(' ')}" as real keystrokes`);
+      else {
         logMove(`real keystrokes unavailable: ${ok}`);
-        return typeSynthetic();
+        logMove('typing with simulated DOM key events');
+        for (const k of keys) {
+          k === 'Enter' ? pressKey('Enter', 'Enter', 13) : pressKey(k, `Digit${k}`, 48 + Number(k));
+          await new Promise((r) => setTimeout(r, 60));
+        }
       }
-      logMove(`typed "${keys.join(' ')}" as real keystrokes`);
-      started = Date.now();
-      setTimeout(verify, 150);
-    };
-    let started = Date.now();
-    const verify = () => {
-      const now = urlObjectId();
-      if (now === objectId) return setTimeout(() => (urlObjectId() === objectId ? done(true) : afterTyping()), 500);
-      if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
-      if (Date.now() - started < 1500) return setTimeout(verify, 100);
-      afterTyping();
-    };
-    const afterTyping = () => {
+      if (noSlideInUrl) return done(true);
+      const typed = await waitHold(objectId, 1500);
+      if (typed === 'superseded') return abandon();
+      if (typed) return done(true);
+
       const now = urlObjectId();
       const landed = now ? slidesById.get(now) : undefined;
       logMove(`after typing ${googleNumber}: URL shows ${now ? (landed === undefined ? `unknown slide ${now}` : `slide ${landed + 1} (Google #${numberByIdx.get(landed)})`) : 'no slide'}`);
-      afterTypingFailed();
+      if (superseded()) return abandon();
+
+      const pv = await presenterJump(googleNumber);
+      if (pv === true) {
+        logMove(`clicked "Slide ${googleNumber}" in the presenter view list`);
+        const r = await waitHold(objectId, 2500);
+        if (r === 'superseded') return abandon();
+        if (r) return done(true);
+      } else if (pv !== 'none') logMove(`presenter view list: ${pv}`);
+      if (superseded()) return abandon();
+
+      for (const steps of [arrowSteps, clickSteps]) {
+        const r = await steps(from, to, objectId, info);
+        if (r === 'superseded') return abandon();
+        if (r === true) return done(true);
+      }
+      loadUrl();
     };
-    typeNext();
+    run().catch((err) => { logMove(`error: ${err.message}`); done(false); });
   }
 
   // Diagnostics for the popup ("what does this window think?").
@@ -478,7 +526,7 @@
       const objectId = slidesByIdx.get(to);
       const timer = setTimeout(() => { onMoveDone = null; sendResponse({ ok: false, log: [...moveLog, 'timed out (a reload may have happened; check the slide)'] }); }, 6000);
       onMoveDone = (moved) => { clearTimeout(timer); sendResponse({ ok: moved, log: moveLog }); };
-      navigateTo(here, to, objectId, info);
+      navigateTo(here, to, objectId, info, true);
       return true;
     }
     if (msg?.type !== 'status') return;
@@ -507,6 +555,7 @@
 
   setInterval(tick, POLL_MS);
   setInterval(syncRemote, 1000);
+  setInterval(syncDebuggerHold, 1000);
   window.addEventListener('hashchange', tick);
   window.addEventListener('popstate', tick);
 })();

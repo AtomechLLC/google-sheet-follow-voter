@@ -1,7 +1,16 @@
 // Service worker: types keystrokes into a tab through the debugger protocol. These are real,
 // trusted key events (the same path a hardware keyboard takes), which Google Slides accepts
-// where synthetic DOM events are ignored. Attached only while typing, then released.
+// where synthetic DOM events are ignored.
+//
+// While a tab is presenting with remote control on, the content script asks us to hold the
+// debugger attached. Observed on real Google Slides: every attach shows Chrome's "started
+// debugging this browser" bar, even over a fullscreen slideshow, and shrinks the slideshow's
+// viewport (1440 -> 1384 px) so the projected slide visibly resizes; attaching per move and
+// detaching 4 s later made the slide jump on every remote move after a pause, and the attach
+// added ~70-130 ms to that move. Held, the bar appears once when presenting starts.
 const attached = new Map(); // tabId -> detach timer
+const held = new Set();     // tabs the content script wants kept attached
+const canceled = new Set(); // tabs where the user clicked Cancel on Chrome's bar: don't hold again
 
 const VK = { Enter: 13, ArrowLeft: 37, ArrowRight: 39 };
 function keyParams(key) {
@@ -22,7 +31,8 @@ async function attach(tabId) {
   await new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, '1.3', () => {
       const err = chrome.runtime.lastError;
-      err ? reject(new Error(err.message)) : resolve();
+      // A restarted service worker forgets its sessions; the old one may still be attached.
+      err && !/already attached/i.test(err.message) ? reject(new Error(err.message)) : resolve();
     });
   });
   attached.set(tabId, null);
@@ -30,22 +40,43 @@ async function attach(tabId) {
 
 function scheduleDetach(tabId) {
   clearTimeout(attached.get(tabId));
+  if (held.has(tabId)) return attached.set(tabId, null);
   attached.set(tabId, setTimeout(() => {
     attached.delete(tabId);
     chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
   }, 4000));
 }
 
-chrome.debugger.onDetach.addListener(({ tabId }) => { clearTimeout(attached.get(tabId)); attached.delete(tabId); });
+chrome.debugger.onDetach.addListener(({ tabId }, reason) => {
+  clearTimeout(attached.get(tabId));
+  attached.delete(tabId);
+  held.delete(tabId);
+  if (reason === 'canceled_by_user') canceled.add(tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => { held.delete(tabId); canceled.delete(tabId); });
+
+/** Keep (on) or stop keeping (off) the debugger attached to a presenting tab. */
+async function hold(tabId, on) {
+  if (!on) {
+    canceled.delete(tabId); // a new presentation may hold again
+    if (held.delete(tabId)) scheduleDetach(tabId);
+    return 'released';
+  }
+  if (canceled.has(tabId)) return 'canceled by user';
+  held.add(tabId);
+  await attach(tabId);
+  return 'held';
+}
 
 async function typeKeys(tabId, keys) {
   await attach(tabId);
   try {
-    for (const key of keys) {
-      const p = keyParams(key);
+    for (let i = 0; i < keys.length; i++) {
+      const p = keyParams(keys[i]);
       await send({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...p });
       await send({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...p });
-      await new Promise((r) => setTimeout(r, 120));
+      // Google Slides buffers typed digits; 40 ms apart is plenty (was 120 ms, plus 120 ms after Enter).
+      if (i < keys.length - 1) await new Promise((r) => setTimeout(r, 40));
     }
   } finally {
     scheduleDetach(tabId);
@@ -53,7 +84,14 @@ async function typeKeys(tabId, keys) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'typeKeys' || !sender.tab?.id) return;
+  if (!sender.tab?.id) return;
+  if (msg?.type === 'holdDebugger') {
+    hold(sender.tab.id, Boolean(msg.on))
+      .then((state) => sendResponse({ ok: true, state }))
+      .catch((err) => { held.delete(sender.tab.id); sendResponse({ ok: false, error: err.message }); });
+    return true;
+  }
+  if (msg?.type !== 'typeKeys') return;
   typeKeys(sender.tab.id, msg.keys)
     .then(() => sendResponse({ ok: true }))
     .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -154,6 +192,10 @@ const PRESENTER_DUMP_JS = `(() => {
 })()`;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'hasPresenter') {
+    findPresenterTarget().then((t) => sendResponse({ open: Boolean(t) }), () => sendResponse({ open: false }));
+    return true;
+  }
   if (msg?.type === 'presenterJump') {
     (async () => {
       const target = await findPresenterTarget();

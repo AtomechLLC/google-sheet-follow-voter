@@ -156,18 +156,24 @@ this needs the extension there. With it installed and paired, **Remote control**
 
 1. On the presenting laptop, present as usual and walk away if you need to.
 2. The extension listens to the session: when anyone changes the slide from a dashboard or the
-   phone remote, it moves your Google Slides to that slide by typing the slide number and Enter into
-   the presentation with real keystrokes through Chrome's extension debugger channel, which reaches
-   the tab even when the window is not focused (Google Slides ignores simulated key events): first
-   the slide number followed by Enter, and if that does not take, arrow-key presses one slide at a
-   time with the address bar checked after each. Failing that it clicks Google's own Previous/Next
-   controls. In a classic
-   `/present` window it finally loads the slide's URL. Works in Present mode and with presenter
-   view (speaker notes) open. When the keystroke method is used, Chrome shows a "Slide Pulse
-   Follower started debugging this browser" bar for a couple of seconds; that is Chrome's rule for
-   the debugger channel and cannot be hidden by the extension. To silence it permanently, start
-   Chrome with the `--silent-debugger-extension-api` flag (add it to the Chrome shortcut's target on
-   Windows). A badge says who moved it, and turns red if a move did not take.
+   phone remote, it moves your Google Slides with real keystrokes through Chrome's extension
+   debugger channel, which reaches the tab even when the window is not focused (Google Slides
+   ignores simulated key events): one arrow press for Next/Previous, otherwise the slide number
+   followed by Enter (also used if the arrow press did not change the slide within 0.7 s, e.g. an
+   animation build took it). If that does not take, arrow-key presses one slide at a time with the
+   slide checked after each, then clicks on Google's own Previous/Next controls, and in a classic
+   `/present` window finally loading the slide's URL. Measured on real Google Slides the slide
+   changes about 50–100 ms after the move reaches the laptop, and quick taps on the phone are
+   followed one for one (a newer tap takes over from a move still being checked). Works in Present
+   mode, the in-tab slideshow and with presenter view (speaker notes) open. While you present with
+   Remote control on, Chrome shows a "Slide Pulse Follower started debugging this browser" bar
+   (also over a fullscreen slideshow); the extension keeps the debugger attached for the whole
+   slideshow so the bar appears once at the start instead of popping in and resizing the slide on
+   every remote move. That bar is Chrome's rule for the debugger channel and cannot be hidden by
+   the extension. Clicking its **Cancel** stops that, and moves then show the bar briefly each time.
+   To silence it permanently, start Chrome with the `--silent-debugger-extension-api` flag (add it
+   to the Chrome shortcut's target on Windows). A badge says who moved it, and turns red if a move
+   did not take.
    Google numbers skipped slides too, so the app records each slide's Google number at import and
    types that (re-import decks imported before this change). With presenter view open, the
    extension can also jump by clicking the slide in presenter view's own slide list.
