@@ -274,8 +274,10 @@ app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) =>
   let idx = Number(req.body?.index);
   if (!Number.isInteger(idx)) return res.status(400).json({ error: 'index must be an integer' });
   idx = Math.max(0, Math.min(Math.max(s.slide_count - 1, 0), idx));
-  Sessions.setCurrentSlide(s.code, idx, cleanName(req.body?.by));
+  const source = ['dashboard', 'phone remote'].includes(req.body?.source) ? req.body.source : 'api';
+  Sessions.setCurrentSlide(s.code, idx, cleanName(req.body?.by), source);
   broadcastSession(s.code);
+  broadcastResults(s.code);
   res.json({ currentSlide: idx });
 });
 
@@ -346,8 +348,9 @@ app.post('/api/ext/session/:code/slide', loadSession, requireTeacher, (req, res)
   const slide = Sessions.slides(s.code).find((sl) => sl.object_id === objectId);
   if (!slide) return res.status(404).json({ error: 'Slide not found in this session. Re-import the deck if you edited it.' });
   if (slide.idx !== s.current_slide) {
-    Sessions.setCurrentSlide(s.code, slide.idx, cleanName(req.body?.by));
+    Sessions.setCurrentSlide(s.code, slide.idx, cleanName(req.body?.by), 'Google Slides');
     broadcastSession(s.code);
+    broadcastResults(s.code);
   }
   res.json({ index: slide.idx, slideCount: s.slide_count });
 });

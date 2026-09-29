@@ -74,6 +74,18 @@ CREATE TABLE IF NOT EXISTS text_cache (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (hash, lang)
 );
+CREATE TABLE IF NOT EXISTS slide_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
+  at INTEGER NOT NULL,
+  by TEXT,
+  source TEXT,
+  kind TEXT NOT NULL,
+  from_idx INTEGER,
+  to_idx INTEGER NOT NULL,
+  to_object_id TEXT
+);
+CREATE INDEX IF NOT EXISTS slide_events_session ON slide_events(session_code, id);
 CREATE TABLE IF NOT EXISTS session_members (
   session_code TEXT NOT NULL REFERENCES sessions(code) ON DELETE CASCADE,
   teacher_id TEXT NOT NULL,
@@ -192,6 +204,10 @@ const stmt = {
   studentQuestions: db.prepare(
     'SELECT id, slide_idx, text, lang, answered, reply, reply_by, replied_at, created_at FROM questions WHERE session_code = ? AND student_id = ? ORDER BY created_at DESC'
   ),
+  insertSlideEvent: db.prepare(
+    'INSERT INTO slide_events (session_code, at, by, source, kind, from_idx, to_idx, to_object_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ),
+  recentSlideEvents: db.prepare('SELECT id, at, by, source, kind, from_idx, to_idx, to_object_id FROM slide_events WHERE session_code = ? ORDER BY id DESC LIMIT ?'),
   getCachedText: db.prepare('SELECT text FROM text_cache WHERE hash = ? AND lang = ?'),
   putCachedText: db.prepare('INSERT OR REPLACE INTO text_cache (hash, lang, text, created_at) VALUES (?, ?, ?, ?)'),
 };
@@ -231,9 +247,18 @@ export const Sessions = {
       code
     );
   },
-  setCurrentSlide(code, idx, by = null) {
+  /** Set the current slide and log who did it. `source`: dashboard | phone remote | Google Slides | api. */
+  setCurrentSlide(code, idx, by = null, source = null) {
+    const s = stmt.getSession.get(code);
+    const from = s ? s.current_slide : null;
     stmt.setCurrentSlide.run(idx, by, now(), code);
+    const kind = from === null ? 'jump' : idx === from + 1 ? 'next' : idx === from - 1 ? 'prev' : idx === from ? 'same' : 'jump';
+    if (kind !== 'same') {
+      const slide = stmt.getSlide.get(code, idx);
+      stmt.insertSlideEvent.run(code, now(), by, source, kind, from, idx, slide?.object_id || null);
+    }
   },
+  driveLog: (code, limit = 100) => stmt.recentSlideEvents.all(code, limit),
   /** Role of a signed-in teacher for this session: 'owner', 'cohost' or null. */
   roleFor(session, teacherId) {
     if (!teacherId) return null;

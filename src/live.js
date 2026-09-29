@@ -33,6 +33,7 @@ export function resultsState(code) {
     counts: Votes.counts(code),
     participants: Votes.participants(code),
     questions: Questions.list(code),
+    driveLog: Sessions.driveLog(code, 60),
   };
 }
 

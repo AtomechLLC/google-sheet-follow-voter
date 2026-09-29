@@ -91,7 +91,7 @@ async function goTo(idx) {
   if (!session || idx < 0 || idx >= session.slideCount) return;
   session.currentSlide = idx; session.changedBy = myName; render();
   if (navigator.vibrate) navigator.vibrate(10);
-  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName }, headers }); }
+  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName, source: 'phone remote' }, headers }); }
   catch (err) { toast(err.message); }
 }
 $('#prev').addEventListener('click', () => goTo(session.currentSlide - 1));

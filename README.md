@@ -126,6 +126,13 @@ With translation configured, questions typed in another language arrive translat
 the original underneath, and your reply is translated back into the student's language. Each
 translation is cached, so nothing is paid for twice.
 
+## Driving log
+
+The dashboard has a collapsible **Driving log** under the slide: every slide change with the time,
+who made it, from where (dashboard, phone remote, or Google Slides via the extension), the kind of
+move (next, previous, jump), and the target slide's number and Google object id, for example
+`[Joe] Google Slides → Jump to slide 20 (g2e02a843a92_0_298) from slide 7`. Newest first, last 60.
+
 ## Two (or more) instructors
 
 Any number of instructors can drive the same presentation.

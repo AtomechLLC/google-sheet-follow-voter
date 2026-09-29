@@ -99,6 +99,13 @@
       </div>
 
       <div class="card">
+        <details id="drive-log-box">
+          <summary style="cursor:pointer"><b>Driving log</b> <span class="tiny">who moved the slide, and where (newest first)</span></summary>
+          <ul class="qlist" id="drive-log" style="margin-top:8px; font-size:.9rem"><li class="muted">No slide changes yet.</li></ul>
+        </details>
+      </div>
+
+      <div class="card">
         <div class="row spread">
           <h2 style="margin:0">Questions <span id="q-count" class="pill"></span></h2>
           <label class="row tiny"><input type="checkbox" id="q-current"> This slide only</label>
@@ -216,7 +223,7 @@ connectLive({
   onStatus: (s) => { const el = $('#conn'); el.textContent = s === 'online' ? 'live' : 'reconnecting…'; el.className = `pill ${s === 'online' ? 'ok' : 'warn'}`; },
   onMessage: (msg) => {
     if (msg.type === 'session') { session = msg.session; renderSession(); renderTable(); renderQuestions(); }
-    if (msg.type === 'results') { results = msg.results; renderCounts(); renderTable(); renderQuestions(); renderThumbs(); }
+    if (msg.type === 'results') { results = msg.results; renderCounts(); renderTable(); renderQuestions(); renderThumbs(); renderDriveLog(); }
     if (msg.type === 'presence') {
       const others = msg.instructors.filter((n) => n !== myName);
       $('#instructors').textContent = others.length ? `Also here: ${others.join(', ')}` : 'Only you are here';
@@ -326,6 +333,21 @@ function renderTable() {
     </tr>`).join('') || '<tr><td colspan="6" class="muted">No slides yet.</td></tr>';
 }
 
+function renderDriveLog() {
+  const log = results.driveLog || [];
+  const label = (e) => {
+    const target = `slide ${e.to_idx + 1}${e.to_object_id ? ` (${escapeHtml(e.to_object_id)})` : ''}`;
+    if (e.kind === 'next') return `Next slide → ${target}`;
+    if (e.kind === 'prev') return `Previous slide → ${target}`;
+    return `Jump to ${target}${e.from_idx !== null && e.from_idx !== undefined ? ` from slide ${e.from_idx + 1}` : ''}`;
+  };
+  $('#drive-log').innerHTML = log.map((e) => `
+    <li style="padding:6px 0; display:block">
+      <span class="mono tiny" style="color:var(--text-3)">${new Date(e.at).toLocaleTimeString()}</span>
+      <b>[${escapeHtml(e.by || 'unknown')}]</b> <span class="tiny">${escapeHtml(e.source || '')}</span> → ${label(e)}
+    </li>`).join('') || '<li class="muted">No slide changes yet.</li>';
+}
+
 function renderQuestions() {
   if (!session) return;
   let qs = results.questions;
@@ -362,7 +384,7 @@ async function goTo(idx) {
   session.currentSlide = idx; // optimistic
   session.changedBy = myName;
   renderSession();
-  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName }, headers }); }
+  try { await api(`/api/sessions/${code}/slide`, { method: 'POST', body: { index: idx, by: myName, source: 'dashboard' }, headers }); }
   catch (err) { toast(err.message); }
 }
 async function reimport() {
