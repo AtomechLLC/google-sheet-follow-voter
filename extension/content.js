@@ -203,15 +203,62 @@
    * animation steps, and harmless if the presentation and presenter-view windows both do it.
    * In the editor, or if typing does not take, load the slide's URL instead.
    */
+  let moveLog = [];               // what the last move tried, for the popup's test button
+  let onMoveDone = null;
+  const logMove = (m) => { moveLog.push(`${new Date().toLocaleTimeString()} ${m}`); };
+
+  /** Google's own Previous/Next controls in Present mode and presenter view (found by label). */
+  function findNavButton(direction) {
+    const want = direction > 0 ? /next/i : /prev/i;
+    const docs = [document, ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument; } catch { return null; } })].filter(Boolean);
+    for (const d of docs) {
+      for (const el of d.querySelectorAll('[aria-label], [title], [data-tooltip]')) {
+        const label = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('data-tooltip') || ''}`;
+        if (want.test(label) && /slide/i.test(label)) return el;
+      }
+    }
+    return null;
+  }
+
+  /** Step with clicks on Google's controls; resolves true when the URL reaches the target. */
+  function clickSteps(from, to, objectId, info) {
+    return new Promise((resolve) => {
+      const delta = to - from;
+      if (from === undefined || Math.abs(delta) > 12) return resolve(false);
+      const btn = findNavButton(delta);
+      if (!btn) { logMove('no Previous/Next control found to click'); return resolve(false); }
+      logMove(`clicking "${btn.getAttribute('aria-label') || btn.getAttribute('title') || 'control'}" ${Math.abs(delta)}×`);
+      let n = 0;
+      const step = () => {
+        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        btn.click();
+        n++;
+        setTimeout(() => {
+          const now = parseSlidesUrl(location.href)?.objectId;
+          if (now === objectId) return resolve(true);
+          if (n < Math.abs(delta) + 4) return step(); // a few extra clicks cover animation builds
+          resolve(!info.objectId); // no URL to verify (presenter view): trust it
+        }, 250);
+      };
+      step();
+    });
+  }
+
   function navigateTo(from, to, objectId, info) {
-    navigating = { target: to, until: Date.now() + 4000 };
+    navigating = { target: to, until: Date.now() + 6000 };
+    moveLog = [];
+    logMove(`move from ${from === undefined ? '?' : from + 1} to ${to + 1} (${info.presenterView ? 'presenter view' : info.mode}${presenterViewOpen() ? ', notes window open' : ''})`);
     const done = (moved) => {
       navigating = null;
       last = `${info.presentationId}:${objectId}`;
+      logMove(moved ? 'done: slide reached' : 'done: NOT moved');
       if (moved) showBadge(`Slide Pulse: on slide ${to + 1}${latestState?.changedBy ? ` (${latestState.changedBy})` : ''}`, true);
+      if (onMoveDone) { const cb = onMoveDone; onMoveDone = null; cb(moved); }
       if (latestTarget !== to) followServer(); // the target moved on while we were busy
     };
     const loadUrl = () => {
+      logMove('falling back to loading the slide URL (reload)');
       const u = new URL(location.href);
       if (info.mode === 'present') u.searchParams.set('slide', `id.${objectId}`);
       else u.hash = `slide=id.${objectId}`;
@@ -223,6 +270,7 @@
     // Preferred: real keystrokes via the background worker (debugger protocol). If that is
     // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
     const typeSynthetic = () => {
+      logMove('typing with simulated DOM key events');
       let i = 0;
       const next = () => {
         if (i < keys.length) {
@@ -240,7 +288,11 @@
       try {
         chrome.runtime.sendMessage({ type: 'typeKeys', keys }, (res) => {
           answered = true;
-          if (chrome.runtime.lastError || !res?.ok) return typeSynthetic();
+          if (chrome.runtime.lastError || !res?.ok) {
+            logMove(`real keystrokes unavailable: ${chrome.runtime.lastError?.message || res?.error || 'no response'}`);
+            return typeSynthetic();
+          }
+          logMove(`typed "${keys.join(' ')}" as real keystrokes`);
           started = Date.now();
           setTimeout(verify, 150);
         });
@@ -253,12 +305,17 @@
       if (now === objectId) return done(true);
       if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
       if (Date.now() - started < 1500) return setTimeout(verify, 100);
-      // Typing did not take. Reloading would break presenter view, so only do it for a plain slideshow window.
-      if (info.presenterView || window.opener || presenterViewOpen()) {
-        showBadge(`Slide Pulse: could not move this window to slide ${to + 1} (keys ignored)`, false);
-        return done(false);
-      }
-      loadUrl();
+      logMove(`URL still shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
+      // Typing did not take: click Google's own Previous/Next controls, verifying as we go.
+      clickSteps(now ? slidesById.get(now) : from, to, objectId, info).then((moved) => {
+        if (moved) return done(true);
+        // Reloading would break presenter view, so only do it for a plain slideshow window.
+        if (info.presenterView || presenterViewOpen()) {
+          showBadge(`Slide Pulse: could not move this window to slide ${to + 1}`, false);
+          return done(false);
+        }
+        loadUrl();
+      });
     };
     typeNext();
   }
@@ -266,6 +323,19 @@
   // Diagnostics for the popup ("what does this window think?").
   let lastReport = null;
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === 'testJump') {
+      const info = parseSlidesUrl(location.href);
+      const session = info ? sessions.find((x) => x.presentationId === info.presentationId) : null;
+      if (!info || !session) return sendResponse({ ok: false, log: ['This window is not a paired Google Slides presentation.'] });
+      if (!slidesByIdx.size) return sendResponse({ ok: false, log: ['Not connected to the session yet (no slide list). Is Remote control on and the session live?'] });
+      const here = info.objectId ? slidesById.get(info.objectId) : undefined;
+      const to = here === 1 ? 0 : 1; // toggle between slide 1 and 2
+      const objectId = slidesByIdx.get(to);
+      const timer = setTimeout(() => { onMoveDone = null; sendResponse({ ok: false, log: [...moveLog, 'timed out (a reload may have happened; check the slide)'] }); }, 6000);
+      onMoveDone = (moved) => { clearTimeout(timer); sendResponse({ ok: moved, log: moveLog }); };
+      navigateTo(here, to, objectId, info);
+      return true;
+    }
     if (msg?.type !== 'status') return;
     const info = parseSlidesUrl(location.href);
     const session = info ? sessions.find((x) => x.presentationId === info.presentationId) : null;
@@ -282,6 +352,7 @@
       remote, paused, followInEditor,
       serverSlide: latestTarget,
       lastReport,
+      lastMove: moveLog.join(' | ') || null,
       version: chrome.runtime.getManifest().version,
     });
   });

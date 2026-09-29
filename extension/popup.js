@@ -89,3 +89,12 @@ document.querySelector('details')?.addEventListener('toggle', async (e) => {
     });
   } catch (err) { out.textContent = err.message; }
 });
+
+$('#test-jump')?.addEventListener('click', async () => {
+  const out = $('#test-log'); out.style.display = ''; out.textContent = 'Testing… watch the presentation window.';
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  chrome.tabs.sendMessage(tab.id, { type: 'testJump' }, (res) => {
+    if (chrome.runtime.lastError || !res) { out.textContent = 'The active tab is not a Google Slides presentation window.'; return; }
+    out.textContent = (res.ok ? 'MOVED ✔\n' : 'DID NOT MOVE ✘\n') + res.log.join('\n');
+  });
+});

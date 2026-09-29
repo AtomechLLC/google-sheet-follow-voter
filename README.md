@@ -150,12 +150,15 @@ this needs the extension there. With it installed and paired, **Remote control**
 1. On the presenting laptop, present as usual and walk away if you need to.
 2. The extension listens to the session: when anyone changes the slide from a dashboard or the
    phone remote, it moves your Google Slides to that slide by typing the slide number and Enter into
-   the presentation as real keystrokes (Chrome's extension debugger channel; Google Slides ignores
-   simulated key events). This works in plain Present mode and with presenter view (speaker notes)
-   open. Chrome shows a brief "Slide Pulse Follower started debugging this browser" bar during a
-   remote move; that is expected. A badge says who moved it, and turns red if a move did not take.
+   the presentation as real keystrokes (Chrome's extension debugger channel, which reaches the tab
+   even when the window is not focused; Google Slides ignores simulated key events). If that does
+   not take, it clicks Google's own Previous/Next controls; in a plain slideshow window it finally
+   loads the slide's URL. Works in Present mode and with presenter view (speaker notes) open. Chrome
+   shows a brief "Slide Pulse Follower started debugging this browser" bar during a remote move;
+   that is expected. A badge says who moved it, and turns red if a move did not take.
    The extension popup has a **Diagnostics** section: open it while the presentation window is active
-   to see what the extension detects (mode, pairing, current slide, connection). Untick
+   to see what the extension detects, and a **Test remote move** button that moves the presentation
+   and reports which method worked (or why none did). Untick
    **Remote control** in the popup if you ever want your laptop to ignore other instructors.
 3. The co-instructor drives from their dashboard (arrow keys) or from the **phone remote**:
    `/r/CODE?key=…`, copied with the "Copy phone remote link" button on the dashboard. It shows the
