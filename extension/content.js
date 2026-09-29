@@ -272,29 +272,41 @@
   const extendLock = () => { if (navigating) navigating.until = Date.now() + 6000; };
 
   async function stepToward(from, to, objectId, info, press, what) {
-    let presses = 0, stalled = 0, lastSeen = urlObjectId(), flipped = false;
-    const maxPresses = 40 + slidesById.size * 3;
-    const distance = (id) => { const i = id ? slidesById.get(id) : undefined; return i === undefined ? Infinity : Math.abs(to - i); };
-    let dir = from === undefined || to > from ? 1 : -1;
-    let prevDist = distance(urlObjectId());
-    logMove(`stepping with ${what}`);
+    let presses = 0, stalled = 0, lastSeen = urlObjectId(), flipped = false, unknownSeen = 0;
+    const startIdx = lastSeen ? slidesById.get(lastSeen) : from;
+    // Never wander: at most twice the expected distance plus a few presses for animation builds.
+    const maxPresses = startIdx === undefined ? 12 : Math.abs(to - startIdx) * 2 + 8;
+    const distance = (id) => { const i = id ? slidesById.get(id) : undefined; return i === undefined ? null : Math.abs(to - i); };
+    let dir = startIdx === undefined || to > startIdx ? 1 : -1;
+    let prevDist = distance(lastSeen);
+    logMove(`stepping with ${what} from slide ${startIdx === undefined ? '?' : startIdx + 1} (${dir > 0 ? 'forward' : 'back'}, max ${maxPresses} presses)`);
     while (presses < maxPresses) {
       const now = urlObjectId();
       if (now === objectId) { await new Promise((r) => setTimeout(r, 500)); return urlObjectId() === objectId; }
       if (now !== lastSeen) {
         stalled = 0; lastSeen = now;
         const d = distance(now);
-        if (d > prevDist && !flipped) { dir = -dir; flipped = true; logMove('moved away from the target; reversing direction'); }
-        prevDist = d;
+        if (d === null) {
+          // A slide the session does not know (deck edited since import?). Two of those in a row: stop.
+          if (++unknownSeen >= 2) { logMove(`reached slides the session does not know (${now}); re-import the deck`); return false; }
+        } else {
+          unknownSeen = 0;
+          if (prevDist !== null && d > prevDist) {
+            if (flipped) { logMove('moving away from the target again; stopping'); return false; }
+            dir = -dir; flipped = true; logMove('moved away from the target; reversing direction');
+          }
+          prevDist = d;
+        }
       } else if (presses) stalled++;
       if (stalled >= 3 && !flipped) { dir = -dir; flipped = true; stalled = 0; logMove('no movement; trying the other direction'); }
-      else if (stalled >= 5) { logMove(`${what} stopped moving the slideshow after ${presses} presses`); return false; }
+      else if (stalled >= 3) { logMove(`${what} stopped moving the slideshow after ${presses} presses`); return false; }
       const ok = await press(dir);
       if (ok !== true) { logMove(`${what} unavailable: ${ok}`); return false; }
       presses++;
       extendLock();
       await new Promise((r) => setTimeout(r, 220));
     }
+    logMove(`${what}: gave up after ${presses} presses without reaching the slide`);
     return false;
   }
 
@@ -446,7 +458,8 @@
     };
     const afterTyping = () => {
       const now = urlObjectId();
-      logMove(`URL shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
+      const landed = now ? slidesById.get(now) : undefined;
+      logMove(`after typing ${googleNumber}: URL shows ${now ? (landed === undefined ? `unknown slide ${now}` : `slide ${landed + 1} (Google #${numberByIdx.get(landed)})`) : 'no slide'}`);
       afterTypingFailed();
     };
     typeNext();
