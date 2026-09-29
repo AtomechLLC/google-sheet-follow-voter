@@ -171,11 +171,22 @@ this needs the extension there. With it installed and paired, **Remote control**
    slideshow so the bar appears once at the start instead of popping in and resizing the slide on
    every remote move. That bar is Chrome's rule for the debugger channel and cannot be hidden by
    the extension. Clicking its **Cancel** stops that, and moves then show the bar briefly each time.
-   To silence it permanently, start Chrome with the `--silent-debugger-extension-api` flag (add it
-   to the Chrome shortcut's target on Windows). A badge says who moved it, and turns red if a move
-   did not take.
+   The bar shows in every window of that Chrome, not only the slideshow. To silence it, start
+   Chrome on the presenting laptop with the `--silent-debugger-extension-api` flag (it then hides
+   that bar for every extension, so use it only on the laptop you present from). On Windows, if
+   you launch Chrome from the Start menu: press Start, type Chrome, right-click **Google Chrome** →
+   **Open file location**, right-click the shortcut → **Properties**, and add
+   ` --silent-debugger-extension-api` after the closing quote in **Target** (Windows asks for
+   administrator approval). A pinned taskbar icon is a separate shortcut: edit it the same way.
+   Then quit Chrome fully (⋮ → **Exit**, and exit it from the system tray if it runs in the
+   background) and start it again; `chrome://version` lists the flag under **Command Line** when
+   it took. A badge says who moved it, and turns red if a move did not take.
    Google numbers skipped slides too, so the app records each slide's Google number at import and
-   types that (re-import decks imported before this change). With presenter view open, the
+   types that. **Click Re-import slides after editing the deck** (adding, removing, reordering or
+   skipping slides): with a stale slide list the typed numbers point at the wrong slides, the
+   extension lands wrong, steps around and reports where it ended up, and everyone's slide jumps.
+   Seen on a real deck imported at 33 slides that had grown to 41 shown plus 4 skipped: remote
+   moves from slide 18 on went astray until a re-import. With presenter view open, the
    extension can also jump by clicking the slide in presenter view's own slide list.
    The extension popup has a **Diagnostics** section: open it while the presentation window is active
    to see what the extension detects, a **Test remote move** button that moves the presentation
