@@ -255,7 +255,7 @@
         btn.click();
         n++;
         setTimeout(() => {
-          const now = parseSlidesUrl(location.href)?.objectId;
+          const now = urlObjectId();
           if (now === objectId) return resolve(true);
           if (n < Math.abs(delta) + 4) return step(); // a few extra clicks cover animation builds
           resolve(!info.objectId); // no URL to verify (presenter view): trust it
@@ -265,8 +265,27 @@
     });
   }
 
+  /** Current slide id as Google reports it: the ?slide= query wins over the #slide= hash. */
+  function urlObjectId() {
+    const u = new URL(location.href);
+    const q = u.searchParams.get('slide');
+    const raw = q || new URLSearchParams(u.hash.replace(/^#/, '')).get('slide') || '';
+    return raw.replace(/^id\./, '') || null;
+  }
+
+  /** Poll until the URL shows `objectId` or `ms` elapse. */
+  const waitForSlide = (objectId, ms) => new Promise((resolve) => {
+    const started = Date.now();
+    const poll = () => {
+      if (urlObjectId() === objectId) return resolve(true);
+      if (Date.now() - started >= ms) return resolve(false);
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
+
   function navigateTo(from, to, objectId, info) {
-    navigating = { target: to, until: Date.now() + 6000 };
+    navigating = { target: to, until: Date.now() + 8000 };
     moveLog = [];
     logMove(`move from ${from === undefined ? '?' : from + 1} to ${to + 1} (${info.presenterView ? 'presenter view' : info.mode}${presenterViewOpen() ? ', notes window open' : ''})`);
     const done = (moved) => {
@@ -279,7 +298,7 @@
     };
     const loadUrl = () => {
       const u = new URL(location.href);
-      if (/\/present/.test(u.pathname)) {
+      if (/\/d\/[^/]+\/present/.test(u.pathname)) {
         logMove('falling back to loading the slide URL (reload)');
         u.searchParams.set('slide', `id.${objectId}`);
         location.assign(u.toString());
@@ -290,6 +309,22 @@
       }
     };
     if (info.mode !== 'present') return loadUrl();
+
+    // Quiet methods first: they need no debugger session, so Chrome shows no "started debugging" bar.
+    const hasQuery = new URL(location.href).searchParams.has('slide');
+    const quiet = async () => {
+      // 1. Hash navigation (editor-hosted slideshow may follow it; harmless otherwise).
+      if (!/\/d\/[^/]+\/present/.test(location.pathname) && hasQuery) {
+        logMove('trying URL hash navigation');
+        location.hash = `slide=id.${objectId}`;
+        if (await waitForSlide(objectId, 700)) return true;
+      }
+      // 2. Google's own Previous/Next controls for short hops.
+      if (from !== undefined && Math.abs(to - from) <= 3) {
+        if (await clickSteps(from, to, objectId, info)) return true;
+      }
+      return false;
+    };
 
     const keys = [...String(to + 1), 'Enter'];
     // Preferred: real keystrokes via the background worker (debugger protocol). If that is
@@ -326,13 +361,15 @@
     };
     let started = Date.now();
     const verify = () => {
-      const now = parseSlidesUrl(location.href)?.objectId;
+      const now = urlObjectId();
       if (now === objectId) return done(true);
       if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
       if (Date.now() - started < 1500) return setTimeout(verify, 100);
       logMove(`URL still shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
-      // Typing did not take: click Google's own Previous/Next controls, verifying as we go.
-      clickSteps(now ? slidesById.get(now) : from, to, objectId, info).then((moved) => {
+      // Typing did not take: click Google's own Previous/Next controls (longer hops), verifying as we go.
+      const cur = now ? slidesById.get(now) : from;
+      const tryClicks = cur !== undefined && Math.abs(to - cur) > 3 ? clickSteps(cur, to, objectId, info) : Promise.resolve(false);
+      tryClicks.then((moved) => {
         if (moved) return done(true);
         // Reloading would break presenter view, so only do it for a plain slideshow window.
         if (info.presenterView || presenterViewOpen()) {
@@ -342,7 +379,7 @@
         loadUrl();
       });
     };
-    typeNext();
+    quiet().then((moved) => (moved ? done(true) : typeNext()));
   }
 
   // Diagnostics for the popup ("what does this window think?").
