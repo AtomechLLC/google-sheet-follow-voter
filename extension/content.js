@@ -163,7 +163,7 @@
       latestState = msg.session;
       // Coalesce bursts (someone holding the arrow key): act once on the newest target.
       clearTimeout(followTimer);
-      followTimer = setTimeout(followServer, 300);
+      followTimer = setTimeout(followServer, 120);
     };
     ws.onclose = () => {
       if (socket !== ws) return;
@@ -233,7 +233,7 @@
   const waitHold = (objectId, ms) => new Promise((resolve) => {
     const started = Date.now();
     const poll = () => {
-      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900);
+      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 500);
       if (Date.now() - started >= ms) return resolve(false);
       setTimeout(poll, 100);
     };
@@ -269,6 +269,8 @@
    * the address bar is peeked: if the slideshow moved away from the target (a reordered deck), the
    * direction is reversed. Stops when several presses change nothing.
    */
+  const extendLock = () => { if (navigating) navigating.until = Date.now() + 6000; };
+
   async function stepToward(from, to, objectId, info, press, what) {
     let presses = 0, stalled = 0, lastSeen = urlObjectId(), flipped = false;
     const maxPresses = 40 + slidesById.size * 3;
@@ -278,7 +280,7 @@
     logMove(`stepping with ${what}`);
     while (presses < maxPresses) {
       const now = urlObjectId();
-      if (now === objectId) { await new Promise((r) => setTimeout(r, 900)); return urlObjectId() === objectId; }
+      if (now === objectId) { await new Promise((r) => setTimeout(r, 500)); return urlObjectId() === objectId; }
       if (now !== lastSeen) {
         stalled = 0; lastSeen = now;
         const d = distance(now);
@@ -290,6 +292,7 @@
       const ok = await press(dir);
       if (ok !== true) { logMove(`${what} unavailable: ${ok}`); return false; }
       presses++;
+      extendLock();
       await new Promise((r) => setTimeout(r, 220));
     }
     return false;
@@ -394,6 +397,7 @@
 
     const googleNumber = numberByIdx.get(to) || to + 1; // what Google calls this slide (skipped slides count)
     const keys = [...String(googleNumber), 'Enter'];
+    const oneStep = from !== undefined && Math.abs(to - from) === 1;
     // Preferred: real keystrokes via the background worker (debugger protocol). If that is
     // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
     const typeSynthetic = () => {
@@ -411,6 +415,18 @@
       next();
     };
     const typeNext = async () => {
+      if (oneStep) {
+        // Next/Previous: one real arrow press, verified quickly; fall through to the typed number if it did not take.
+        const ok1 = await realKeys([to > from ? 'ArrowRight' : 'ArrowLeft']);
+        if (ok1 === true) {
+          logMove(`pressed ${to > from ? 'ArrowRight' : 'ArrowLeft'} as a real keystroke`);
+          if (await waitHold(objectId, 1200)) return done(true);
+          // an animation build may have swallowed the press: try once more
+          await realKeys([to > from ? 'ArrowRight' : 'ArrowLeft']);
+          if (await waitHold(objectId, 1200)) return done(true);
+          logMove('arrow press did not reach the slide; typing the number');
+        }
+      }
       const ok = await realKeys(keys);
       if (ok !== true) {
         logMove(`real keystrokes unavailable: ${ok}`);
@@ -423,7 +439,7 @@
     let started = Date.now();
     const verify = () => {
       const now = urlObjectId();
-      if (now === objectId) return setTimeout(() => (urlObjectId() === objectId ? done(true) : afterTyping()), 900);
+      if (now === objectId) return setTimeout(() => (urlObjectId() === objectId ? done(true) : afterTyping()), 500);
       if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
       if (Date.now() - started < 1500) return setTimeout(verify, 100);
       afterTyping();

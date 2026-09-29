@@ -72,6 +72,9 @@
   </div>
 
   <div id="status-banner" class="card"></div>
+  <div id="phone-hint" class="card" style="display:none">
+    <b>On a phone?</b> The dashboard is built for a laptop. <a id="phone-remote-link" href="#">Open the phone remote</a> instead: big Next/Previous buttons and thumbnails, nothing else.
+  </div>
 
   <div class="grid">
     <div class="stack">
@@ -205,6 +208,10 @@ if (info.role !== 'owner') {
 }
 $('#invite').addEventListener('click', () => copyText(info.cohostUrl));
 $('#copy-remote').addEventListener('click', () => copyText(info.remoteUrl));
+if (window.matchMedia('(max-width: 700px)').matches) {
+  $('#phone-hint').style.display = '';
+  $('#phone-remote-link').href = `/r/${code}?key=${encodeURIComponent(key)}`;
+}
 $('#qr').src = `/api/sessions/${code}/qr.svg`;
 $('#join-url').textContent = info.studentUrl.replace(/^https?:\/\//, '');
 $('#code').textContent = code;

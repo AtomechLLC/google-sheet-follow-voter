@@ -33,7 +33,7 @@ function scheduleDetach(tabId) {
   attached.set(tabId, setTimeout(() => {
     attached.delete(tabId);
     chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
-  }, 2500));
+  }, 4000));
 }
 
 chrome.debugger.onDetach.addListener(({ tabId }) => { clearTimeout(attached.get(tabId)); attached.delete(tabId); });
