@@ -123,11 +123,14 @@ try {
   console.warn('[extension] could not package extension/:', err.message);
 }
 export const currentExtensionVersion = () => extensionVersion;
-app.get('/extension.zip', (req, res) => {
+// /extension.zip and /extension-<version>.zip both serve the package; the download is named with
+// the version (the folder inside stays "slide-pulse-extension" so it can be unzipped over the old one).
+const extensionZipName = () => `slide-pulse-extension-${extensionVersion || 'unknown'}.zip`;
+app.get(['/extension.zip', '/extension-:version.zip'], (req, res) => {
   if (!extensionZip) return res.status(404).send('Extension package not available on this server.');
   res.set('Content-Type', 'application/zip');
-  res.set('Content-Disposition', 'attachment; filename="slide-pulse-extension.zip"');
-  res.set('Cache-Control', 'public, max-age=3600');
+  res.set('Content-Disposition', `attachment; filename="${extensionZipName()}"`);
+  res.set('Cache-Control', 'public, max-age=300');
   res.send(extensionZip);
 });
 
@@ -313,7 +316,7 @@ app.use('/api/ext', cors);
 
 /** Latest extension version served by this site, so installed copies can warn when outdated. */
 app.get('/api/ext/version', (req, res) => {
-  res.json({ version: extensionVersion, downloadUrl: `${config.baseUrl}/extension.zip` });
+  res.json({ version: extensionVersion, downloadUrl: `${config.baseUrl}/extension-${extensionVersion}.zip`, fileName: extensionZipName() });
 });
 
 /** Pairing: the extension pastes a dashboard link, we return what it needs to store. */

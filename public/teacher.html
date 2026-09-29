@@ -134,7 +134,7 @@
             <li>Co-instructors can then move your Google Slides from their dashboard or the phone remote (untick <b>Remote control</b> in the popup to stop that).</li>
           </ol>
           <div class="row">
-            <a class="btn btn-sm" href="/extension.zip" download>Download extension</a>
+            <a class="btn btn-sm" id="ext-download" href="/extension.zip" download>Download extension</a>
             <button class="btn-sm" id="copy-dashboard">Copy dashboard link for the extension</button>
           </div>
         </details>
@@ -205,6 +205,10 @@ $('#present-link').href = info.presentUrl;
 $('#copy-student').addEventListener('click', () => copyText(info.studentUrl));
 $('#copy-dashboard').addEventListener('click', () => copyText(info.teacherUrl));
 $('#copy-pair').addEventListener('click', () => copyText(info.teacherUrl));
+if (info.extensionVersion) {
+  $('#ext-download').href = `/extension-${info.extensionVersion}.zip`;
+  $('#ext-download').textContent = `Download extension v${info.extensionVersion}`;
+}
 if (!info.presentationId) $('#ext-help').style.display = 'none';
 
 connectLive({
@@ -225,7 +229,7 @@ connectLive({
         el.style.display = '';
         if (stale.length) {
           el.className = 'pill warn';
-          el.innerHTML = `Extension outdated on ${escapeHtml(stale.map((e) => e.name.replace(/ \(Slides\)$/, '')).join(', '))}: v${escapeHtml(stale[0].version)} → v${escapeHtml(latest)} · <a href="/extension.zip" download>download</a>`;
+          el.innerHTML = `Extension outdated on ${escapeHtml(stale.map((e) => e.name.replace(/ \(Slides\)$/, '')).join(', '))}: v${escapeHtml(stale[0].version)} → v${escapeHtml(latest)} · <a href="/extension-${escapeHtml(latest)}.zip" download>download v${escapeHtml(latest)}</a>`;
         } else {
           el.className = 'pill ok';
           el.textContent = `Google Slides connected (extension v${exts[0].version})`;

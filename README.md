@@ -179,7 +179,7 @@ slide's id) and tells the server. Student phones follow with no dashboard intera
 
 Install once (Chrome, Edge, Brave, or any Chromium browser):
 
-1. Download the extension from your own server at `https://YOUR-DOMAIN/extension.zip` (linked from the
+1. Download the extension from your own server at `https://YOUR-DOMAIN/extension.zip` (the file is named with its version, e.g. `slide-pulse-extension-1.3.5.zip`; linked from the
    home page and from every dashboard) and unzip it somewhere permanent. The `extension/` folder in this
    repository is the same thing.
 2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked** and choose
