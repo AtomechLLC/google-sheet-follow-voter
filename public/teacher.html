@@ -108,7 +108,12 @@
     </div>
 
     <div class="stack">
-      <div class="card">
+      <div class="card" style="position:relative">
+        <button id="copy-pair" class="btn-sm" title="Copy the pairing link for the Chrome extension" aria-label="Copy extension pairing link"
+          style="position:absolute; top:10px; right:10px; gap:6px; padding:4px 10px; min-height:32px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span class="tiny" style="font-weight:700">Pair link</span>
+        </button>
         <h2>Students join here</h2>
         <div class="qr">
           <img id="qr" alt="QR code for the student link">
@@ -199,6 +204,7 @@ $('#code').textContent = code;
 $('#present-link').href = info.presentUrl;
 $('#copy-student').addEventListener('click', () => copyText(info.studentUrl));
 $('#copy-dashboard').addEventListener('click', () => copyText(info.teacherUrl));
+$('#copy-pair').addEventListener('click', () => copyText(info.teacherUrl));
 if (!info.presentationId) $('#ext-help').style.display = 'none';
 
 connectLive({
