@@ -149,8 +149,9 @@ this needs the extension there. With it installed and paired, **Remote control**
 
 1. On the presenting laptop, present as usual and walk away if you need to.
 2. The extension listens to the session: when anyone changes the slide from a dashboard or the
-   phone remote, it moves your Google Slides to that slide (it sends arrow keys to the presentation,
-   and reloads to the exact slide if that doesn't take). A badge says who moved it. Untick
+   phone remote, it moves your Google Slides to that slide by typing the slide number and Enter into
+   the presentation, which works in plain Present mode and with presenter view (speaker notes) open.
+   A badge says who moved it. Untick
    **Remote control** in the popup if you ever want your laptop to ignore other instructors.
 3. The co-instructor drives from their dashboard (arrow keys) or from the **phone remote**:
    `/r/CODE?key=…`, copied with the "Copy phone remote link" button on the dashboard. It shows the

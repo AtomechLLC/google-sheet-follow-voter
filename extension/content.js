@@ -35,7 +35,10 @@
   chrome.storage.onChanged.addListener(loadSettings);
   loadSettings();
 
+  let badgeHoldUntil = 0; // a failure message stays visible; routine updates don't replace it
   function showBadge(text, ok) {
+    if (ok && Date.now() < badgeHoldUntil) return;
+    if (!ok) badgeHoldUntil = Date.now() + 6000;
     if (!badge) {
       badge = document.createElement('div');
       badge.id = 'slide-pulse-badge';
@@ -146,72 +149,100 @@
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
 
+  let lastJumped = null; // target we last typed into this window (for windows whose URL has no slide id)
+
+  // The presenter-view window announces itself so the slideshow window never reloads while it is open
+  // (a reload breaks presenter view). Same origin, so a BroadcastChannel reaches both windows.
+  let presenterSeenAt = 0;
+  const channel = (() => { try { return new BroadcastChannel('slide-pulse-presenter'); } catch { return null; } })();
+  if (channel) {
+    channel.onmessage = (e) => { if (e.data?.presentationId === parseSlidesUrl(location.href)?.presentationId) presenterSeenAt = Date.now(); };
+    setInterval(() => {
+      const info = parseSlidesUrl(location.href);
+      if (info?.presenterView) channel.postMessage({ presentationId: info.presentationId });
+    }, 1000);
+  }
+  const presenterViewOpen = () => Date.now() - presenterSeenAt < 3500;
+
   function followServer() {
     if (latestTarget === null || inflight) return;
     if (navigating && Date.now() < navigating.until) return; // finish the current move first; it re-checks when done
     const info = parseSlidesUrl(location.href);
-    if (!info?.objectId) return;
-    const here = slidesById.get(info.objectId);
+    if (!info) return;
     const target = latestTarget;
-    if (here === undefined || here === target) return;
     const objectId = slidesByIdx.get(target);
     if (!objectId) return;
-    const who = latestState?.changedBy ? `${latestState.changedBy} moved to` : 'Moving to';
-    showBadge(`Slide Pulse: ${who} slide ${target + 1}`, true);
+    const here = info.objectId ? slidesById.get(info.objectId) : undefined;
+    if (here === target) { lastJumped = target; return; }
+    // A window that does not show the slide id in its URL (presenter view) acts on every new target.
+    if (here === undefined && lastJumped === target) return;
+    const who = latestState?.changedBy ? `${latestState.changedBy}: moving to` : 'Moving to';
+    showBadge(`Slide Pulse: ${who} slide ${target + 1}…`, true);
     last = `${info.presentationId}:${objectId}`; // don't report our own move back
+    lastJumped = target;
     navigateTo(here, target, objectId, info);
   }
 
+  /** Dispatch a key press once per document (top document plus same-origin iframes). */
+  function pressKey(key, code, keyCode) {
+    const targets = [
+      document.activeElement || document.body,
+      ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument?.body; } catch { return null; } }),
+    ].filter(Boolean);
+    for (const t of targets) {
+      for (const type of ['keydown', 'keyup']) {
+        t.dispatchEvent(new KeyboardEvent(type, { key, code, keyCode, which: keyCode, bubbles: true, cancelable: true }));
+      }
+    }
+  }
+
   /**
-   * Move this tab to `objectId`. A one-slide step is done with the arrow key (no reload) and
-   * verified against the URL; anything else, or a step that doesn't take, loads the exact slide.
+   * Move this window to slide `to` (0-based) by typing its number followed by Enter, which Google
+   * Slides treats as "go to slide N" in Present mode and presenter view. Exact, no reload, no
+   * animation steps, and harmless if the presentation and presenter-view windows both do it.
+   * In the editor, or if typing does not take, load the slide's URL instead.
    */
   function navigateTo(from, to, objectId, info) {
-    const delta = to - from;
     navigating = { target: to, until: Date.now() + 4000 };
-    const done = () => {
+    const done = (moved) => {
       navigating = null;
       last = `${info.presentationId}:${objectId}`;
+      if (moved) showBadge(`Slide Pulse: on slide ${to + 1}${latestState?.changedBy ? ` (${latestState.changedBy})` : ''}`, true);
       if (latestTarget !== to) followServer(); // the target moved on while we were busy
     };
-    const fallback = () => {
+    const loadUrl = () => {
       const u = new URL(location.href);
       if (info.mode === 'present') u.searchParams.set('slide', `id.${objectId}`);
       else u.hash = `slide=id.${objectId}`;
       location.assign(u.toString());
     };
-    if (Math.abs(delta) !== 1) return fallback();
-    const key = delta > 0 ? 'ArrowRight' : 'ArrowLeft';
-    // One dispatch per document (it bubbles up to the document itself); same-origin iframes get their own.
-    const targets = [
-      document.activeElement || document.body,
-      ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument?.body; } catch { return null; } }),
-    ].filter(Boolean);
-    const press = () => {
-      for (const t of targets) {
-        for (const type of ['keydown', 'keyup']) {
-          t.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode: key === 'ArrowRight' ? 39 : 37, which: key === 'ArrowRight' ? 39 : 37, bubbles: true, cancelable: true }));
-        }
+    if (info.mode !== 'present') return loadUrl();
+
+    const digits = String(to + 1).split('');
+    let i = 0;
+    const typeNext = () => {
+      if (i < digits.length) {
+        const d = digits[i++];
+        pressKey(d, `Digit${d}`, 48 + Number(d));
+        return setTimeout(typeNext, 60);
       }
+      pressKey('Enter', 'Enter', 13);
+      setTimeout(verify, 150);
     };
-    // Press, then poll the URL. A press that only played an animation step leaves the URL
-    // unchanged, so press again (a few times at most); a wrong slide means keys are unreliable.
-    let presses = 0;
-    const attempt = () => {
-      press();
-      presses++;
-      const started = Date.now();
-      const poll = () => {
-        const now = parseSlidesUrl(location.href)?.objectId;
-        if (now === objectId) return done();
-        if (now && slidesById.get(now) !== from) return fallback();
-        if (Date.now() - started < 900) return setTimeout(poll, 100);
-        if (presses < 4) return attempt();
-        fallback();
-      };
-      setTimeout(poll, 100);
+    const started = Date.now();
+    const verify = () => {
+      const now = parseSlidesUrl(location.href)?.objectId;
+      if (now === objectId) return done(true);
+      if (!info.objectId) return done(true); // this window's URL never shows the slide (presenter view): trust the jump
+      if (Date.now() - started < 1500) return setTimeout(verify, 100);
+      // Typing did not take. Reloading would break presenter view, so only do it for a plain slideshow window.
+      if (info.presenterView || window.opener || presenterViewOpen()) {
+        showBadge(`Slide Pulse: could not move this window to slide ${to + 1} (keys ignored)`, false);
+        return done(false);
+      }
+      loadUrl();
     };
-    attempt();
+    typeNext();
   }
 
   setInterval(tick, POLL_MS);

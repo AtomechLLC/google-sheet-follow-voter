@@ -11,13 +11,15 @@ const { parseSlidesUrl, parseDashboardLink, isNewer } = mod.exports;
 test('parseSlidesUrl reads present-mode and editor URLs', () => {
   const id = '1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd';
   assert.deepEqual(parseSlidesUrl(`https://docs.google.com/presentation/d/${id}/present?slide=id.g2f1a_0_12`),
-    { presentationId: id, objectId: 'g2f1a_0_12', mode: 'present' });
+    { presentationId: id, objectId: 'g2f1a_0_12', mode: 'present', presenterView: false });
   assert.deepEqual(parseSlidesUrl(`https://docs.google.com/presentation/d/${id}/present?slide=id.p`),
-    { presentationId: id, objectId: 'p', mode: 'present' });
+    { presentationId: id, objectId: 'p', mode: 'present', presenterView: false });
   assert.deepEqual(parseSlidesUrl(`https://docs.google.com/presentation/u/1/d/${id}/edit#slide=id.g99`),
-    { presentationId: id, objectId: 'g99', mode: 'edit' });
+    { presentationId: id, objectId: 'g99', mode: 'edit', presenterView: false });
   assert.deepEqual(parseSlidesUrl(`https://docs.google.com/presentation/d/${id}/present`),
-    { presentationId: id, objectId: null, mode: 'present' });
+    { presentationId: id, objectId: null, mode: 'present', presenterView: false });
+  assert.deepEqual(parseSlidesUrl(`https://docs.google.com/presentation/d/${id}/presentnotes?foo=1`),
+    { presentationId: id, objectId: null, mode: 'present', presenterView: true });
   assert.equal(parseSlidesUrl('https://docs.google.com/spreadsheets/d/x/edit'), null);
 });
 

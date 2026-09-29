@@ -7,11 +7,14 @@ function parseSlidesUrl(href) {
   const m = u.pathname.match(/\/presentation\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)\/?([a-z]*)/);
   if (!m) return null;
   const presentationId = m[1];
-  const mode = m[2] === 'present' ? 'present' : 'edit';
+  // "present" is the slideshow window; "presentnotes" (and similar) is the presenter-view window
+  // that shows speaker notes and drives the slideshow when presenter view is on.
+  const mode = m[2].startsWith('present') ? 'present' : 'edit';
+  const presenterView = mode === 'present' && m[2] !== 'present';
   // Present mode: ?slide=id.g123abc_0_5   Editor: #slide=id.g123abc_0_5
   const raw = u.searchParams.get('slide') || new URLSearchParams(u.hash.replace(/^#/, '')).get('slide') || '';
   const objectId = raw.replace(/^id\./, '') || null;
-  return { presentationId, objectId, mode };
+  return { presentationId, objectId, mode, presenterView };
 }
 
 /** Parse a pasted dashboard link into { server, code, key }. */
