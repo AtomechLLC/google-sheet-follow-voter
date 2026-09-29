@@ -57,7 +57,7 @@
     badge._t = setTimeout(() => (badge.style.opacity = '0'), ok ? 1500 : 6000);
   }
 
-  async function report(session, info) {
+  let report = async function report(session, info) {
     inflight = true;
     try {
       const res = await fetch(`${session.server}/api/ext/session/${session.code}/slide`, {
@@ -81,6 +81,7 @@
     if (navigating && Date.now() < navigating.until) return; // we are moving the tab ourselves
     const info = parseSlidesUrl(location.href);
     if (!info || !info.objectId) return;
+    if (info.presenterView) return; // only the slideshow window reports; the notes window's URL can lag
     if (info.mode !== 'present' && !followInEditor) return;
     const session = sessions.find((s) => s.presentationId === info.presentationId);
     if (!session) return;
@@ -172,7 +173,7 @@
     const target = latestTarget;
     const objectId = slidesByIdx.get(target);
     if (!objectId) return;
-    const here = info.objectId ? slidesById.get(info.objectId) : undefined;
+    const here = info.objectId && !info.presenterView ? slidesById.get(info.objectId) : undefined;
     if (here === target) { lastJumped = target; return; }
     // A window that does not show the slide id in its URL (presenter view) acts on every new target.
     if (here === undefined && lastJumped === target) return;
@@ -218,22 +219,39 @@
     };
     if (info.mode !== 'present') return loadUrl();
 
-    const digits = String(to + 1).split('');
-    let i = 0;
-    const typeNext = () => {
-      if (i < digits.length) {
-        const d = digits[i++];
-        pressKey(d, `Digit${d}`, 48 + Number(d));
-        return setTimeout(typeNext, 60);
-      }
-      pressKey('Enter', 'Enter', 13);
-      setTimeout(verify, 150);
+    const keys = [...String(to + 1), 'Enter'];
+    // Preferred: real keystrokes via the background worker (debugger protocol). If that is
+    // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
+    const typeSynthetic = () => {
+      let i = 0;
+      const next = () => {
+        if (i < keys.length) {
+          const k = keys[i++];
+          k === 'Enter' ? pressKey('Enter', 'Enter', 13) : pressKey(k, `Digit${k}`, 48 + Number(k));
+          return setTimeout(next, 60);
+        }
+        started = Date.now();
+        setTimeout(verify, 150);
+      };
+      next();
     };
-    const started = Date.now();
+    const typeNext = () => {
+      let answered = false;
+      try {
+        chrome.runtime.sendMessage({ type: 'typeKeys', keys }, (res) => {
+          answered = true;
+          if (chrome.runtime.lastError || !res?.ok) return typeSynthetic();
+          started = Date.now();
+          setTimeout(verify, 150);
+        });
+      } catch { typeSynthetic(); return; }
+      setTimeout(() => { if (!answered) typeSynthetic(); }, 2500);
+    };
+    let started = Date.now();
     const verify = () => {
       const now = parseSlidesUrl(location.href)?.objectId;
       if (now === objectId) return done(true);
-      if (!info.objectId) return done(true); // this window's URL never shows the slide (presenter view): trust the jump
+      if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
       if (Date.now() - started < 1500) return setTimeout(verify, 100);
       // Typing did not take. Reloading would break presenter view, so only do it for a plain slideshow window.
       if (info.presenterView || window.opener || presenterViewOpen()) {
@@ -244,6 +262,31 @@
     };
     typeNext();
   }
+
+  // Diagnostics for the popup ("what does this window think?").
+  let lastReport = null;
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type !== 'status') return;
+    const info = parseSlidesUrl(location.href);
+    const session = info ? sessions.find((x) => x.presentationId === info.presentationId) : null;
+    sendResponse({
+      url: location.href,
+      mode: info ? (info.presenterView ? 'presenter view (notes window)' : info.mode) : 'not a Slides page',
+      presentationId: info?.presentationId || null,
+      paired: Boolean(session),
+      pairedTitle: session?.title || null,
+      slideId: info?.objectId || null,
+      slideIndex: info?.objectId ? slidesById.get(info.objectId) : undefined,
+      knownSlides: slidesById.size,
+      socket: socket ? (socket.readyState === 1 ? 'connected' : 'connecting') : 'not connected',
+      remote, paused, followInEditor,
+      serverSlide: latestTarget,
+      lastReport,
+      version: chrome.runtime.getManifest().version,
+    });
+  });
+  const origReport = report;
+  report = async (session, info) => { lastReport = `${info.objectId} at ${new Date().toLocaleTimeString()}`; return origReport(session, info); };
 
   setInterval(tick, POLL_MS);
   setInterval(syncRemote, 1000);

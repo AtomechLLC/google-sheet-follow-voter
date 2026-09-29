@@ -72,3 +72,20 @@ $('#pair').addEventListener('click', async () => {
     msg(err.message, 'err');
   }
 });
+
+// Diagnostics: ask the content script in the active tab what it sees.
+document.querySelector('details')?.addEventListener('toggle', async (e) => {
+  if (!e.target.open) return;
+  const out = $('#diag');
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) throw new Error('no active tab');
+    chrome.tabs.sendMessage(tab.id, { type: 'status' }, (res) => {
+      if (chrome.runtime.lastError || !res) {
+        out.textContent = 'The active tab is not a Google Slides page (or the extension has not loaded there yet). Open the presentation window, then reopen this popup.';
+        return;
+      }
+      out.textContent = Object.entries(res).map(([k, v]) => `${k}: ${v === undefined ? '(unknown)' : JSON.stringify(v)}`).join('\n');
+    });
+  } catch (err) { out.textContent = err.message; }
+});

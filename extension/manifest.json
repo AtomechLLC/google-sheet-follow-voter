@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Slide Pulse Follower",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Keeps Slide Pulse student phones in sync with the slide you are presenting in Google Slides.",
   "permissions": [
-    "storage"
+    "storage",
+    "debugger"
   ],
   "content_scripts": [
     {
@@ -32,5 +33,8 @@
     "16": "icons/16.png",
     "48": "icons/48.png",
     "128": "icons/128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
   }
 }
