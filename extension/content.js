@@ -256,7 +256,7 @@
         n++;
         setTimeout(() => {
           const now = urlObjectId();
-          if (now === objectId) return resolve(true);
+          if (now === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900); // must still hold
           if (n < Math.abs(delta) + 4) return step(); // a few extra clicks cover animation builds
           resolve(!info.objectId); // no URL to verify (presenter view): trust it
         }, 250);
@@ -273,11 +273,15 @@
     return raw.replace(/^id\./, '') || null;
   }
 
-  /** Poll until the URL shows `objectId` or `ms` elapse. */
+  /**
+   * Poll until the URL shows `objectId` or `ms` elapse, then make sure it still does a moment
+   * later: the editor updates the address bar on its own, and the slideshow re-asserts the real
+   * slide shortly after, so a URL that only flickers to the target is not a move.
+   */
   const waitForSlide = (objectId, ms) => new Promise((resolve) => {
     const started = Date.now();
     const poll = () => {
-      if (urlObjectId() === objectId) return resolve(true);
+      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900);
       if (Date.now() - started >= ms) return resolve(false);
       setTimeout(poll, 100);
     };
@@ -303,23 +307,20 @@
         u.searchParams.set('slide', `id.${objectId}`);
         location.assign(u.toString());
       } else {
-        // In-tab slideshow on the /edit URL: a reload would end the slideshow, so only set the hash.
-        logMove('falling back to setting the URL hash (no reload)');
-        location.hash = `slide=id.${objectId}`;
+        // In-tab slideshow on the /edit URL: a reload would end the slideshow and a hash change only
+        // moves the editor's address bar, so there is nothing safe left to try.
+        logMove('no safe fallback for the in-tab slideshow');
+        showBadge(`Slide Pulse: could not move this window to slide ${to + 1}`, false);
+        return done(false);
       }
     };
     if (info.mode !== 'present') return loadUrl();
 
     // Quiet methods first: they need no debugger session, so Chrome shows no "started debugging" bar.
-    const hasQuery = new URL(location.href).searchParams.has('slide');
     const quiet = async () => {
-      // 1. Hash navigation (editor-hosted slideshow may follow it; harmless otherwise).
-      if (!/\/d\/[^/]+\/present/.test(location.pathname) && hasQuery) {
-        logMove('trying URL hash navigation');
-        location.hash = `slide=id.${objectId}`;
-        if (await waitForSlide(objectId, 700)) return true;
-      }
-      // 2. Google's own Previous/Next controls for short hops.
+      // Google's own Previous/Next controls for short hops. (Changing the URL hash is NOT used on
+      // the in-tab slideshow: the editor follows it and rewrites the address bar, but the slideshow
+      // on screen does not move, which fooled the URL check.)
       if (from !== undefined && Math.abs(to - from) <= 3) {
         if (await clickSteps(from, to, objectId, info)) return true;
       }
@@ -362,10 +363,14 @@
     let started = Date.now();
     const verify = () => {
       const now = urlObjectId();
-      if (now === objectId) return done(true);
+      if (now === objectId) return setTimeout(() => (urlObjectId() === objectId ? done(true) : afterTyping()), 900);
       if (!info.objectId || info.presenterView) return done(true); // no reliable URL here (presenter view): trust the jump
       if (Date.now() - started < 1500) return setTimeout(verify, 100);
-      logMove(`URL still shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
+      afterTyping();
+    };
+    const afterTyping = () => {
+      const now = urlObjectId();
+      logMove(`URL shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
       // Typing did not take: click Google's own Previous/Next controls (longer hops), verifying as we go.
       const cur = now ? slidesById.get(now) : from;
       const tryClicks = cur !== undefined && Math.abs(to - cur) > 3 ? clickSteps(cur, to, objectId, info) : Promise.resolve(false);
