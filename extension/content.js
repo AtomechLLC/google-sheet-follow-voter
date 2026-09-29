@@ -213,6 +213,49 @@
     }
   }
 
+  /** Current slide id as Google reports it: the ?slide= query wins over the #slide= hash. */
+  function urlObjectId() {
+    const u = new URL(location.href);
+    const q = u.searchParams.get('slide');
+    const raw = q || new URLSearchParams(u.hash.replace(/^#/, '')).get('slide') || '';
+    return raw.replace(/^id\./, '') || null;
+  }
+
+  /** Type keys as real keystrokes through the background worker; resolves false if unavailable. */
+  const realKeys = (keys) => new Promise((resolve) => {
+    let answered = false;
+    try {
+      chrome.runtime.sendMessage({ type: 'typeKeys', keys }, (res) => {
+        answered = true;
+        resolve(!chrome.runtime.lastError && Boolean(res?.ok) ? true : (res?.error || chrome.runtime.lastError?.message || 'no response'));
+      });
+    } catch (err) { resolve(err.message); }
+    setTimeout(() => { if (!answered) resolve('timed out'); }, 2500);
+  });
+
+  /**
+   * Step toward the target with real arrow-key presses (any distance), re-reading the URL after
+   * each press so builds and overshoots are handled. Resolves true once the URL shows the target.
+   */
+  async function arrowSteps(from, to, objectId, info) {
+    let presses = 0, stalled = 0, lastSeen = urlObjectId();
+    const maxPresses = 40 + slidesById.size * 3;
+    logMove('stepping with real arrow-key presses');
+    while (presses < maxPresses) {
+      const now = urlObjectId();
+      if (now === objectId) { await new Promise((r) => setTimeout(r, 900)); return urlObjectId() === objectId; }
+      const cur = now ? slidesById.get(now) : from;
+      if (cur === undefined) return false;
+      if (now !== lastSeen) { stalled = 0; lastSeen = now; } else if (presses) stalled++;
+      if (stalled >= 5) { logMove(`arrow keys stopped moving the slideshow after ${presses} presses`); return false; }
+      const ok = await realKeys([to > cur ? 'ArrowRight' : 'ArrowLeft']);
+      if (ok !== true) { logMove(`real keystrokes unavailable: ${ok}`); return false; }
+      presses++;
+      await new Promise((r) => setTimeout(r, 220));
+    }
+    return false;
+  }
+
   /**
    * Move this window to slide `to` (0-based) by typing its number followed by Enter, which Google
    * Slides treats as "go to slide N" in Present mode and presenter view. Exact, no reload, no
@@ -240,53 +283,36 @@
     return null;
   }
 
-  /** Step with clicks on Google's controls; resolves true when the URL reaches the target. */
+  /**
+   * Step toward the target with Google's own Previous/Next controls, any distance. After each
+   * click the direction is re-read from the URL (so builds and overshoots are handled); gives up
+   * when several clicks in a row change nothing. Resolves true once the URL shows the target.
+   */
   function clickSteps(from, to, objectId, info) {
     return new Promise((resolve) => {
-      const delta = to - from;
-      if (from === undefined || Math.abs(delta) > 12) return resolve(false);
-      const btn = findNavButton(delta);
-      if (!btn) { logMove('no Previous/Next control found to click'); return resolve(false); }
-      logMove(`clicking "${btn.getAttribute('aria-label') || btn.getAttribute('title') || 'control'}" ${Math.abs(delta)}×`);
-      let n = 0;
+      const btnNext = findNavButton(1), btnPrev = findNavButton(-1);
+      if (!btnNext && !btnPrev) { logMove('no Previous/Next control found to click'); return resolve(false); }
+      logMove(`stepping with "${(btnNext || btnPrev).getAttribute('aria-label') || 'control'}" clicks`);
+      let clicks = 0, stalled = 0, lastSeen = urlObjectId();
+      const maxClicks = 40 + slidesById.size * 3;
       const step = () => {
+        const now = urlObjectId();
+        if (now === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900); // must still hold
+        const cur = now ? slidesById.get(now) : from;
+        if (cur === undefined) return resolve(!info.objectId); // no URL to verify (presenter view): trust one click
+        if (now !== lastSeen) { stalled = 0; lastSeen = now; } else if (clicks) stalled++;
+        if (stalled >= 5 || clicks >= maxClicks) { logMove(`clicks stopped moving the slideshow after ${clicks} clicks`); return resolve(false); }
+        const btn = to > cur ? btnNext : btnPrev;
+        if (!btn) { logMove('needed control not found'); return resolve(false); }
         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
         btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
         btn.click();
-        n++;
-        setTimeout(() => {
-          const now = urlObjectId();
-          if (now === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900); // must still hold
-          if (n < Math.abs(delta) + 4) return step(); // a few extra clicks cover animation builds
-          resolve(!info.objectId); // no URL to verify (presenter view): trust it
-        }, 250);
+        clicks++;
+        setTimeout(step, 180);
       };
       step();
     });
   }
-
-  /** Current slide id as Google reports it: the ?slide= query wins over the #slide= hash. */
-  function urlObjectId() {
-    const u = new URL(location.href);
-    const q = u.searchParams.get('slide');
-    const raw = q || new URLSearchParams(u.hash.replace(/^#/, '')).get('slide') || '';
-    return raw.replace(/^id\./, '') || null;
-  }
-
-  /**
-   * Poll until the URL shows `objectId` or `ms` elapse, then make sure it still does a moment
-   * later: the editor updates the address bar on its own, and the slideshow re-asserts the real
-   * slide shortly after, so a URL that only flickers to the target is not a move.
-   */
-  const waitForSlide = (objectId, ms) => new Promise((resolve) => {
-    const started = Date.now();
-    const poll = () => {
-      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900);
-      if (Date.now() - started >= ms) return resolve(false);
-      setTimeout(poll, 100);
-    };
-    poll();
-  });
 
   function navigateTo(from, to, objectId, info) {
     navigating = { target: to, until: Date.now() + 8000 };
@@ -302,6 +328,11 @@
     };
     const loadUrl = () => {
       const u = new URL(location.href);
+      // Reloading would break presenter view, so only do it for a plain slideshow window.
+      if (info.presenterView || presenterViewOpen()) {
+        showBadge(`Slide Pulse: could not move this window to slide ${to + 1}`, false);
+        return done(false);
+      }
       if (/\/d\/[^/]+\/present/.test(u.pathname)) {
         logMove('falling back to loading the slide URL (reload)');
         u.searchParams.set('slide', `id.${objectId}`);
@@ -317,14 +348,13 @@
     if (info.mode !== 'present') return loadUrl();
 
     // Quiet methods first: they need no debugger session, so Chrome shows no "started debugging" bar.
-    const quiet = async () => {
-      // Google's own Previous/Next controls for short hops. (Changing the URL hash is NOT used on
-      // the in-tab slideshow: the editor follows it and rewrites the address bar, but the slideshow
-      // on screen does not move, which fooled the URL check.)
-      if (from !== undefined && Math.abs(to - from) <= 3) {
-        if (await clickSteps(from, to, objectId, info)) return true;
-      }
-      return false;
+    // Order: typed slide number (exact, one shot) -> real arrow-key stepping -> clicking Google's
+    // controls. (A URL hash change is NOT used on the in-tab slideshow: the editor follows it and
+    // rewrites the address bar while the slideshow on screen stays put.)
+    const afterTypingFailed = async () => {
+      if (await arrowSteps(from, to, objectId, info)) return done(true);
+      if (await clickSteps(from, to, objectId, info)) return done(true);
+      loadUrl();
     };
 
     const keys = [...String(to + 1), 'Enter'];
@@ -344,21 +374,15 @@
       };
       next();
     };
-    const typeNext = () => {
-      let answered = false;
-      try {
-        chrome.runtime.sendMessage({ type: 'typeKeys', keys }, (res) => {
-          answered = true;
-          if (chrome.runtime.lastError || !res?.ok) {
-            logMove(`real keystrokes unavailable: ${chrome.runtime.lastError?.message || res?.error || 'no response'}`);
-            return typeSynthetic();
-          }
-          logMove(`typed "${keys.join(' ')}" as real keystrokes`);
-          started = Date.now();
-          setTimeout(verify, 150);
-        });
-      } catch { typeSynthetic(); return; }
-      setTimeout(() => { if (!answered) typeSynthetic(); }, 2500);
+    const typeNext = async () => {
+      const ok = await realKeys(keys);
+      if (ok !== true) {
+        logMove(`real keystrokes unavailable: ${ok}`);
+        return typeSynthetic();
+      }
+      logMove(`typed "${keys.join(' ')}" as real keystrokes`);
+      started = Date.now();
+      setTimeout(verify, 150);
     };
     let started = Date.now();
     const verify = () => {
@@ -371,20 +395,9 @@
     const afterTyping = () => {
       const now = urlObjectId();
       logMove(`URL shows slide ${now ? (slidesById.get(now) ?? '?') + 1 : '(none)'} after typing`);
-      // Typing did not take: click Google's own Previous/Next controls (longer hops), verifying as we go.
-      const cur = now ? slidesById.get(now) : from;
-      const tryClicks = cur !== undefined && Math.abs(to - cur) > 3 ? clickSteps(cur, to, objectId, info) : Promise.resolve(false);
-      tryClicks.then((moved) => {
-        if (moved) return done(true);
-        // Reloading would break presenter view, so only do it for a plain slideshow window.
-        if (info.presenterView || presenterViewOpen()) {
-          showBadge(`Slide Pulse: could not move this window to slide ${to + 1}`, false);
-          return done(false);
-        }
-        loadUrl();
-      });
+      afterTypingFailed();
     };
-    quiet().then((moved) => (moved ? done(true) : typeNext()));
+    typeNext();
   }
 
   // Diagnostics for the popup ("what does this window think?").

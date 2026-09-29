@@ -150,10 +150,11 @@ this needs the extension there. With it installed and paired, **Remote control**
 1. On the presenting laptop, present as usual and walk away if you need to.
 2. The extension listens to the session: when anyone changes the slide from a dashboard or the
    phone remote, it moves your Google Slides to that slide by typing the slide number and Enter into
-   the presentation. It first clicks Google's own Previous/Next controls for short hops (no
-   debugger needed); if that does not take it types the slide number and
-   Enter as real keystrokes through Chrome's extension debugger channel, which reaches the tab even
-   when the window is not focused (Google Slides ignores simulated key events). In a classic
+   the presentation with real keystrokes through Chrome's extension debugger channel, which reaches
+   the tab even when the window is not focused (Google Slides ignores simulated key events): first
+   the slide number followed by Enter, and if that does not take, arrow-key presses one slide at a
+   time with the address bar checked after each. Failing that it clicks Google's own Previous/Next
+   controls. In a classic
    `/present` window it finally loads the slide's URL. Works in Present mode and with presenter
    view (speaker notes) open. When the keystroke method is used, Chrome shows a "Slide Pulse
    Follower started debugging this browser" bar for a couple of seconds; that is Chrome's rule for

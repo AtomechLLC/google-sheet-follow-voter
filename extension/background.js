@@ -45,7 +45,7 @@ async function typeKeys(tabId, keys) {
       const p = keyParams(key);
       await send({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...p });
       await send({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...p });
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 120));
     }
   } finally {
     scheduleDetach(tabId);
