@@ -82,7 +82,7 @@ document.querySelector('details')?.addEventListener('toggle', async (e) => {
     if (!tab) throw new Error('no active tab');
     chrome.tabs.sendMessage(tab.id, { type: 'status' }, (res) => {
       if (chrome.runtime.lastError || !res) {
-        out.textContent = 'The active tab is not a Google Slides page (or the extension has not loaded there yet). Open the presentation window, then reopen this popup.';
+        out.textContent = 'No answer from this tab. If it is a Google Slides page, reload the tab: tabs opened before the extension was updated still run the old code.';
         return;
       }
       out.textContent = Object.entries(res).map(([k, v]) => `${k}: ${v === undefined ? '(unknown)' : JSON.stringify(v)}`).join('\n');
@@ -94,7 +94,7 @@ $('#test-jump')?.addEventListener('click', async () => {
   const out = $('#test-log'); out.style.display = ''; out.textContent = 'Testing… watch the presentation window.';
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   chrome.tabs.sendMessage(tab.id, { type: 'testJump' }, (res) => {
-    if (chrome.runtime.lastError || !res) { out.textContent = 'The active tab is not a Google Slides presentation window.'; return; }
+    if (chrome.runtime.lastError || !res) { out.textContent = 'No answer from this tab. Reload the Google Slides tab (tabs opened before the extension was updated still run the old code), start the slideshow, then try again.'; return; }
     out.textContent = (res.ok ? 'MOVED ✔\n' : 'DID NOT MOVE ✘\n') + res.log.join('\n');
   });
 });

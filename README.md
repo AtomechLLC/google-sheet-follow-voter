@@ -183,9 +183,13 @@ Install once (Chrome, Edge, Brave, or any Chromium browser):
 3. Pin the "Slide Pulse Follower" icon, click it, and paste a **dashboard link**
    (the `/t/CODE?key=…` URL; there is a copy button on the dashboard under the QR code). Click **Pair**.
    You can pair several presentations; the extension picks the right one by the deck being shown.
-4. Open your deck in Google Slides and press **Present**. A small blue badge in the corner confirms
+4. Open your deck in Google Slides and press **Slideshow**. Both the classic `/present` window and
+   the newer in-tab slideshow (the URL stays on `/edit`) are recognised. A small blue badge in the corner confirms
    each slide change ("Slide Pulse: slide 4 of 20"). A red badge means it could not reach the server
    or the slide is unknown (re-import the deck on the dashboard after editing it).
+
+**After every update, reload the Google Slides tab.** Tabs opened before the update keep running
+the old code until reloaded; the popup says so if it gets no answer from the tab.
 
 **Updating.** An unpacked extension does not auto-update: Chrome only updates extensions installed
 from the Chrome Web Store. The app helps in two ways: the dashboard header shows the version of the

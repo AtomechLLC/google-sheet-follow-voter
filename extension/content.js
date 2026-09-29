@@ -19,6 +19,22 @@
   let inflight = false;
   let badge = null;
 
+  /**
+   * Where are we? Newer Google Slides presents inside the editor tab: the URL stays /edit?slide=…
+   * while the slideshow is on screen. So "presenting" is decided by the page, not only the path:
+   * a /present* path, fullscreen, or the slideshow viewer being present in the DOM.
+   */
+  function currentInfo() {
+    const info = parseSlidesUrl(location.href);
+    if (!info) return null;
+    let why = info.mode === 'present' ? 'url' : null;
+    if (!why && document.fullscreenElement) why = 'fullscreen';
+    if (!why && document.querySelector('.punch-viewer-content, .punch-viewer-container, .punch-viewer-svgpage, .punch-present-iframe, [class*="punch-viewer-"]')) why = 'viewer';
+    if (why) info.mode = 'present';
+    info.presentingBecause = why;
+    return info;
+  }
+
   function loadSettings() {
     chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: true, instructorName: '' }, (v) => {
       sessions = v.sessions || [];
@@ -79,7 +95,7 @@
   function tick() {
     if (inflight || paused || !sessions.length) return;
     if (navigating && Date.now() < navigating.until) return; // we are moving the tab ourselves
-    const info = parseSlidesUrl(location.href);
+    const info = currentInfo();
     if (!info || !info.objectId) return;
     if (info.presenterView) return; // only the slideshow window reports; the notes window's URL can lag
     if (info.mode !== 'present' && !followInEditor) return;
@@ -107,7 +123,7 @@
 
   // ---------- remote control: let the session drive this tab ----------
   function currentSession() {
-    const info = parseSlidesUrl(location.href);
+    const info = currentInfo();
     if (!info) return null;
     return { info, session: sessions.find((s) => s.presentationId === info.presentationId) || null };
   }
@@ -168,7 +184,7 @@
   function followServer() {
     if (latestTarget === null || inflight) return;
     if (navigating && Date.now() < navigating.until) return; // finish the current move first; it re-checks when done
-    const info = parseSlidesUrl(location.href);
+    const info = currentInfo();
     if (!info) return;
     const target = latestTarget;
     const objectId = slidesByIdx.get(target);
@@ -212,10 +228,14 @@
     const want = direction > 0 ? /next/i : /prev/i;
     const docs = [document, ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument; } catch { return null; } })].filter(Boolean);
     for (const d of docs) {
+      let loose = null;
       for (const el of d.querySelectorAll('[aria-label], [title], [data-tooltip]')) {
-        const label = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('data-tooltip') || ''}`;
-        if (want.test(label) && /slide/i.test(label)) return el;
+        const label = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('data-tooltip') || ''}`.trim();
+        if (!want.test(label)) continue;
+        if (/slide/i.test(label)) return el;
+        if (!loose && /^(next|previous|prev)$/i.test(label)) loose = el;
       }
+      if (loose) return loose;
     }
     return null;
   }
@@ -258,11 +278,16 @@
       if (latestTarget !== to) followServer(); // the target moved on while we were busy
     };
     const loadUrl = () => {
-      logMove('falling back to loading the slide URL (reload)');
       const u = new URL(location.href);
-      if (info.mode === 'present') u.searchParams.set('slide', `id.${objectId}`);
-      else u.hash = `slide=id.${objectId}`;
-      location.assign(u.toString());
+      if (/\/present/.test(u.pathname)) {
+        logMove('falling back to loading the slide URL (reload)');
+        u.searchParams.set('slide', `id.${objectId}`);
+        location.assign(u.toString());
+      } else {
+        // In-tab slideshow on the /edit URL: a reload would end the slideshow, so only set the hash.
+        logMove('falling back to setting the URL hash (no reload)');
+        location.hash = `slide=id.${objectId}`;
+      }
     };
     if (info.mode !== 'present') return loadUrl();
 
@@ -324,7 +349,7 @@
   let lastReport = null;
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'testJump') {
-      const info = parseSlidesUrl(location.href);
+      const info = currentInfo();
       const session = info ? sessions.find((x) => x.presentationId === info.presentationId) : null;
       if (!info || !session) return sendResponse({ ok: false, log: ['This window is not a paired Google Slides presentation.'] });
       if (!slidesByIdx.size) return sendResponse({ ok: false, log: ['Not connected to the session yet (no slide list). Is Remote control on and the session live?'] });
@@ -337,11 +362,11 @@
       return true;
     }
     if (msg?.type !== 'status') return;
-    const info = parseSlidesUrl(location.href);
+    const info = currentInfo();
     const session = info ? sessions.find((x) => x.presentationId === info.presentationId) : null;
     sendResponse({
       url: location.href,
-      mode: info ? (info.presenterView ? 'presenter view (notes window)' : info.mode) : 'not a Slides page',
+      mode: info ? (info.presenterView ? 'presenter view (notes window)' : info.mode === 'present' ? `presenting (detected by ${info.presentingBecause})` : 'editor (not presenting)') : 'not a Slides page',
       presentationId: info?.presentationId || null,
       paired: Boolean(session),
       pairedTitle: session?.title || null,
