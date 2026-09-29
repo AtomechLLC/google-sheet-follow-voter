@@ -10,21 +10,30 @@ const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 
 const myVersion = chrome.runtime.getManifest().version;
 $('#ver').textContent = `v${myVersion}`;
+$('#ver-footer').textContent = `v${myVersion}`;
+$('#ver-status').textContent = 'checking for updates…';
 
 /** Ask each paired site whether it serves a newer extension. */
 async function checkUpdates(sessions) {
   const servers = [...new Set(sessions.map((s) => s.server))];
+  const status = $('#ver-status');
+  if (!servers.length) { status.textContent = 'pair a presentation to check for updates'; return; }
+  let checked = false;
   for (const server of servers) {
     try {
       const { version, downloadUrl } = await (await fetch(`${server}/api/ext/version`)).json();
+      checked = true;
       if (version && isNewer(version, myVersion)) {
         const el = $('#update');
         el.style.display = '';
         el.innerHTML = `Update available: v${esc(version)}. <a href="${esc(downloadUrl || server + '/extension.zip')}" target="_blank" rel="noopener">Download</a>, unzip over your extension folder, then click ↻ on chrome://extensions.`;
+        status.innerHTML = `<span style="color:#d03b3b">v${esc(version)} available</span>`;
         return;
       }
+      status.innerHTML = `<span style="color:#0a7a2f">up to date</span> (site serves v${esc(version)})`;
     } catch {}
   }
+  if (!checked) status.textContent = 'could not reach the site to check for updates';
 }
 
 chrome.storage.sync.get({ sessions: [], followInEditor: false, paused: false, remote: true, instructorName: '' }, (v) => {
