@@ -37,7 +37,11 @@
   <label><input type="checkbox" id="remote"> Remote control (on by default): co-instructors can move <b>my</b> Google Slides from the dashboard or phone remote</label>
   <details style="margin-top:12px"><summary style="cursor:pointer;font-size:13px;color:#444">Diagnostics (open while the Google Slides window is active)</summary>
     <pre id="diag" style="font-size:11px;white-space:pre-wrap;word-break:break-all;background:#f4f4f1;padding:8px;border-radius:6px;margin:6px 0 0">…</pre>
-    <button id="test-jump" style="margin-top:8px">Test remote move (jumps this presentation to slide 2, or back to 1)</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+      <button id="test-jump">Test remote move (to slide 2, or back to 1)</button>
+      <button id="inspect-pv">Inspect presenter view</button>
+      <button id="copy-logs">Copy logs</button>
+    </div>
     <pre id="test-log" style="font-size:11px;white-space:pre-wrap;word-break:break-all;background:#f4f4f1;padding:8px;border-radius:6px;margin:6px 0 0;display:none"></pre>
   </details>
   <div id="footer" style="margin-top:12px;padding-top:8px;border-top:1px solid #e3e3e3;font-size:12px;color:#666;display:flex;justify-content:space-between;gap:8px">

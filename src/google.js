@@ -130,8 +130,11 @@ export async function importPresentation({ teacher, session, onProgress = () => 
       'title,slides(objectId,pageElements(shape(text(textElements(textRun(content))))),' +
       'slideProperties(isSkipped,notesPage(notesProperties(speakerNotesObjectId),pageElements(objectId,shape(text(textElements(textRun(content))))))))';
     const pres = await slidesGet(token, `${SLIDES_API}/${session.presentation_id}?fields=${encodeURIComponent(fields)}`);
-    // Skipped slides are not shown in Present mode, so leave them out to keep numbering aligned.
-    const slides = (pres.slides || []).filter((s) => !s.slideProperties?.isSkipped);
+    // Skipped slides are not shown in Present mode, so leave them out of the deck students see.
+    // Google still counts them in its "slide N" numbering, so remember each slide's Google number.
+    const all = pres.slides || [];
+    const numberOf = new Map(all.map((s, i) => [s.objectId, i + 1]));
+    const slides = all.filter((s) => !s.slideProperties?.isSkipped);
     const title = pres.title || session.title;
 
     Sessions.setStatus(code, {
@@ -143,7 +146,7 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     // Keep old images visible while re-importing; replace metadata now.
     Sessions.replaceSlides(
       code,
-      slides.map((s, i) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), image: null }))
+      slides.map((s, i) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), number: numberOf.get(s.objectId), image: null }))
     );
     onProgress();
 
@@ -161,7 +164,7 @@ export async function importPresentation({ teacher, session, onProgress = () => 
         const thumb = await slidesGet(await accessTokenFor(teacher), url);
         const file = `${i}-${Date.now().toString(36)}.png`;
         await downloadTo(thumb.contentUrl, path.join(dir, file));
-        Sessions.upsertSlide(code, { idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), image: file });
+        Sessions.upsertSlide(code, { idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), number: numberOf.get(s.objectId), image: file });
         done++;
         Sessions.setStatus(code, {
           status: 'importing',

@@ -107,3 +107,29 @@ $('#test-jump')?.addEventListener('click', async () => {
     out.textContent = (res.ok ? 'MOVED ✔\n' : 'DID NOT MOVE ✘\n') + res.log.join('\n');
   });
 });
+
+let lastStatus = null, lastTest = null, lastDump = null;
+const askTab = (msg) => new Promise((r) => chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => tab ? chrome.tabs.sendMessage(tab.id, msg, (res) => r(chrome.runtime.lastError ? null : res)) : r(null)));
+const askBg = (msg) => new Promise((r) => chrome.runtime.sendMessage(msg, (res) => r(chrome.runtime.lastError ? { ok: false, text: chrome.runtime.lastError.message } : res)));
+
+$('#inspect-pv')?.addEventListener('click', async () => {
+  const out = $('#test-log'); out.style.display = ''; out.textContent = 'Looking for the presenter-view window…';
+  const res = await askBg({ type: 'presenterDump' });
+  lastDump = res?.text || '';
+  out.textContent = lastDump;
+});
+
+$('#copy-logs')?.addEventListener('click', async () => {
+  const status = await askTab({ type: 'status' });
+  const parts = [
+    `Slide Pulse Follower v${myVersion} — ${new Date().toISOString()}`,
+    '--- diagnostics ---',
+    status ? Object.entries(status).map(([k, v]) => `${k}: ${v === undefined ? '(unknown)' : JSON.stringify(v)}`).join('\n') : '(no answer from the active tab; reload the Google Slides tab)',
+    '--- last test ---',
+    $('#test-log').textContent || '(none)',
+  ];
+  if (lastDump) parts.push('--- presenter view ---', lastDump);
+  const text = parts.join('\n');
+  try { await navigator.clipboard.writeText(text); msg('Logs copied. Paste them into the chat.', 'ok'); }
+  catch { $('#test-log').style.display = ''; $('#test-log').textContent = text; msg('Could not access the clipboard; select the text below and copy it.', 'err'); }
+});

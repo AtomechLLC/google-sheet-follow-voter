@@ -161,9 +161,14 @@ this needs the extension there. With it installed and paired, **Remote control**
    the debugger channel and cannot be hidden by the extension. To silence it permanently, start
    Chrome with the `--silent-debugger-extension-api` flag (add it to the Chrome shortcut's target on
    Windows). A badge says who moved it, and turns red if a move did not take.
+   Google numbers skipped slides too, so the app records each slide's Google number at import and
+   types that (re-import decks imported before this change). With presenter view open, the
+   extension can also jump by clicking the slide in presenter view's own slide list.
    The extension popup has a **Diagnostics** section: open it while the presentation window is active
-   to see what the extension detects, and a **Test remote move** button that moves the presentation
-   and reports which method worked (or why none did). Untick
+   to see what the extension detects, a **Test remote move** button that moves the presentation
+   and reports which method worked (or why none did), **Inspect presenter view** which lists the
+   controls in the presenter-view window, and **Copy logs** which puts all of that on the clipboard
+   ready to paste into a bug report. Untick
    **Remote control** in the popup if you ever want your laptop to ignore other instructors.
 3. The co-instructor drives from their dashboard (arrow keys) or from the **phone remote**:
    `/r/CODE?key=…`, copied with the "Copy phone remote link" button on the dashboard. It shows the

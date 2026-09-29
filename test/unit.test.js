@@ -103,3 +103,13 @@ test('open question count excludes answered questions but keeps text-less flags'
   assert.equal(Votes.counts(s.code)[0].open, 1);
   assert.equal(Votes.counts(s.code)[0].question, 3);
 });
+
+test('slides carry Google\'s slide number (defaults to position when not imported)', async () => {
+  const s = Sessions.create({ title: 'N' });
+  createDemoSlides(s.code, 3);
+  assert.deepEqual(Sessions.slides(s.code).map((x) => x.number), [1, 2, 3]);
+  Sessions.upsertSlide(s.code, { idx: 1, objectId: 'demo-1', title: 't', image: '1.svg', number: 4 }); // a skipped slide sits before it
+  assert.equal(Sessions.slide(s.code, 1).number, 4);
+  const { publicState } = await import('../src/live.js');
+  assert.deepEqual(publicState(s.code).slides.map((x) => x.number), [1, 4, 3]);
+});

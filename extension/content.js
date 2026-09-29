@@ -11,6 +11,7 @@
   let socketKey = '';         // which session the socket belongs to
   let slidesById = new Map(); // objectId -> idx, from the session state
   let slidesByIdx = new Map(); // idx -> objectId
+  let numberByIdx = new Map(); // idx -> Google's slide number (counts skipped slides)
   let navigating = null;      // { target, until } while we move the tab ourselves
   let latestTarget = null;    // newest slide index the session asked for
   let latestState = null;
@@ -152,6 +153,7 @@
       if (msg.type !== 'session' || !msg.session) return;
       slidesById = new Map(msg.session.slides.map((sl) => [sl.objectId, sl.idx]));
       slidesByIdx = new Map(msg.session.slides.map((sl) => [sl.idx, sl.objectId]));
+      numberByIdx = new Map(msg.session.slides.map((sl) => [sl.idx, sl.number || sl.idx + 1]));
       latestTarget = msg.session.currentSlide;
       latestState = msg.session;
       // Coalesce bursts (someone holding the arrow key): act once on the newest target.
@@ -221,6 +223,28 @@
     return raw.replace(/^id\./, '') || null;
   }
 
+  /** Poll until the URL shows objectId and still does 0.9 s later, within ms. */
+  const waitHold = (objectId, ms) => new Promise((resolve) => {
+    const started = Date.now();
+    const poll = () => {
+      if (urlObjectId() === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900);
+      if (Date.now() - started >= ms) return resolve(false);
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
+
+  /** Ask the background worker to click "Slide N" in the presenter-view window's slide list. */
+  const presenterJump = (number) => new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'presenterJump', number, title: document.title }, (res) => {
+        if (chrome.runtime.lastError) return resolve(chrome.runtime.lastError.message);
+        resolve(res?.ok ? true : (res?.reason || 'none'));
+      });
+    } catch (err) { resolve(err.message); }
+    setTimeout(() => resolve('timed out'), 4000);
+  });
+
   /** Type keys as real keystrokes through the background worker; resolves false if unavailable. */
   const realKeys = (keys) => new Promise((resolve) => {
     let answered = false;
@@ -234,27 +258,39 @@
   });
 
   /**
-   * Step toward the target with real arrow-key presses (any distance), re-reading the URL after
-   * each press so builds and overshoots are handled. Resolves true once the URL shows the target.
+   * Generic stepper: `press(dir)` moves one slide forward (+1) or back (-1). The target is a slide
+   * ID; the imported order only supplies the first guess at direction. After each press the ID in
+   * the address bar is peeked: if the slideshow moved away from the target (a reordered deck), the
+   * direction is reversed. Stops when several presses change nothing.
    */
-  async function arrowSteps(from, to, objectId, info) {
-    let presses = 0, stalled = 0, lastSeen = urlObjectId();
+  async function stepToward(from, to, objectId, info, press, what) {
+    let presses = 0, stalled = 0, lastSeen = urlObjectId(), flipped = false;
     const maxPresses = 40 + slidesById.size * 3;
-    logMove('stepping with real arrow-key presses');
+    const distance = (id) => { const i = id ? slidesById.get(id) : undefined; return i === undefined ? Infinity : Math.abs(to - i); };
+    let dir = from === undefined || to > from ? 1 : -1;
+    let prevDist = distance(urlObjectId());
+    logMove(`stepping with ${what}`);
     while (presses < maxPresses) {
       const now = urlObjectId();
       if (now === objectId) { await new Promise((r) => setTimeout(r, 900)); return urlObjectId() === objectId; }
-      const cur = now ? slidesById.get(now) : from;
-      if (cur === undefined) return false;
-      if (now !== lastSeen) { stalled = 0; lastSeen = now; } else if (presses) stalled++;
-      if (stalled >= 5) { logMove(`arrow keys stopped moving the slideshow after ${presses} presses`); return false; }
-      const ok = await realKeys([to > cur ? 'ArrowRight' : 'ArrowLeft']);
-      if (ok !== true) { logMove(`real keystrokes unavailable: ${ok}`); return false; }
+      if (now !== lastSeen) {
+        stalled = 0; lastSeen = now;
+        const d = distance(now);
+        if (d > prevDist && !flipped) { dir = -dir; flipped = true; logMove('moved away from the target; reversing direction'); }
+        prevDist = d;
+      } else if (presses) stalled++;
+      if (stalled >= 3 && !flipped) { dir = -dir; flipped = true; stalled = 0; logMove('no movement; trying the other direction'); }
+      else if (stalled >= 5) { logMove(`${what} stopped moving the slideshow after ${presses} presses`); return false; }
+      const ok = await press(dir);
+      if (ok !== true) { logMove(`${what} unavailable: ${ok}`); return false; }
       presses++;
       await new Promise((r) => setTimeout(r, 220));
     }
     return false;
   }
+
+  const arrowSteps = (from, to, objectId, info) =>
+    stepToward(from, to, objectId, info, (dir) => realKeys([dir > 0 ? 'ArrowRight' : 'ArrowLeft']), 'real arrow-key presses');
 
   /**
    * Move this window to slide `to` (0-based) by typing its number followed by Enter, which Google
@@ -283,35 +319,19 @@
     return null;
   }
 
-  /**
-   * Step toward the target with Google's own Previous/Next controls, any distance. After each
-   * click the direction is re-read from the URL (so builds and overshoots are handled); gives up
-   * when several clicks in a row change nothing. Resolves true once the URL shows the target.
-   */
+  /** Step with Google's own Previous/Next controls (same peeking stepper, clicks instead of keys). */
   function clickSteps(from, to, objectId, info) {
-    return new Promise((resolve) => {
-      const btnNext = findNavButton(1), btnPrev = findNavButton(-1);
-      if (!btnNext && !btnPrev) { logMove('no Previous/Next control found to click'); return resolve(false); }
-      logMove(`stepping with "${(btnNext || btnPrev).getAttribute('aria-label') || 'control'}" clicks`);
-      let clicks = 0, stalled = 0, lastSeen = urlObjectId();
-      const maxClicks = 40 + slidesById.size * 3;
-      const step = () => {
-        const now = urlObjectId();
-        if (now === objectId) return setTimeout(() => resolve(urlObjectId() === objectId), 900); // must still hold
-        const cur = now ? slidesById.get(now) : from;
-        if (cur === undefined) return resolve(!info.objectId); // no URL to verify (presenter view): trust one click
-        if (now !== lastSeen) { stalled = 0; lastSeen = now; } else if (clicks) stalled++;
-        if (stalled >= 5 || clicks >= maxClicks) { logMove(`clicks stopped moving the slideshow after ${clicks} clicks`); return resolve(false); }
-        const btn = to > cur ? btnNext : btnPrev;
-        if (!btn) { logMove('needed control not found'); return resolve(false); }
-        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-        btn.click();
-        clicks++;
-        setTimeout(step, 180);
-      };
-      step();
-    });
+    const btnNext = findNavButton(1), btnPrev = findNavButton(-1);
+    if (!btnNext && !btnPrev) { logMove('no Previous/Next control found to click'); return Promise.resolve(false); }
+    const press = async (dir) => {
+      const btn = dir > 0 ? btnNext : btnPrev;
+      if (!btn) return 'needed control not found';
+      btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+      btn.click();
+      return true;
+    };
+    return stepToward(from, to, objectId, info, press, `"${(btnNext || btnPrev).getAttribute('aria-label') || 'control'}" clicks`);
   }
 
   function navigateTo(from, to, objectId, info) {
@@ -337,6 +357,11 @@
         logMove('falling back to loading the slide URL (reload)');
         u.searchParams.set('slide', `id.${objectId}`);
         location.assign(u.toString());
+      } else if (info.mode !== 'present') {
+        // Plain editor: it follows the hash, no reload needed.
+        logMove('editor: navigating by URL hash');
+        location.hash = `slide=id.${objectId}`;
+        setTimeout(() => done(urlObjectId() === objectId), 800);
       } else {
         // In-tab slideshow on the /edit URL: a reload would end the slideshow and a hash change only
         // moves the editor's address bar, so there is nothing safe left to try.
@@ -352,12 +377,17 @@
     // controls. (A URL hash change is NOT used on the in-tab slideshow: the editor follows it and
     // rewrites the address bar while the slideshow on screen stays put.)
     const afterTypingFailed = async () => {
+      const pv = await presenterJump(googleNumber);
+      if (pv === true) logMove(`clicked "Slide ${googleNumber}" in the presenter view list`);
+      if (pv === true && (await waitHold(objectId, 2500))) return done(true);
+      if (pv !== true && pv !== 'none') logMove(`presenter view list: ${pv}`);
       if (await arrowSteps(from, to, objectId, info)) return done(true);
       if (await clickSteps(from, to, objectId, info)) return done(true);
       loadUrl();
     };
 
-    const keys = [...String(to + 1), 'Enter'];
+    const googleNumber = numberByIdx.get(to) || to + 1; // what Google calls this slide (skipped slides count)
+    const keys = [...String(googleNumber), 'Enter'];
     // Preferred: real keystrokes via the background worker (debugger protocol). If that is
     // unavailable (e.g. DevTools already attached), fall back to synthetic DOM key events.
     const typeSynthetic = () => {
@@ -432,6 +462,7 @@
       remote, paused, followInEditor,
       serverSlide: latestTarget,
       lastReport,
+      googleSlideNumber: info?.objectId && slidesById.get(info.objectId) !== undefined ? numberByIdx.get(slidesById.get(info.objectId)) : undefined,
       lastMove: moveLog.join(' | ') || null,
       version: chrome.runtime.getManifest().version,
     });

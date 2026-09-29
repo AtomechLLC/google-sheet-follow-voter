@@ -59,3 +59,72 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     .catch((err) => sendResponse({ ok: false, error: err.message }));
   return true; // async response
 });
+
+// ---------- presenter view (an about:blank popup the content script cannot run in) ----------
+const getTargets = () => new Promise((resolve) => chrome.debugger.getTargets((t) => resolve(t || [])));
+
+async function findPresenterTarget() {
+  const targets = await getTargets();
+  return targets.find((t) => t.type === 'page' && /presenter view/i.test(t.title || '')) || null;
+}
+
+async function withTarget(target, fn) {
+  const id = { targetId: target.id };
+  const already = attachedTargets.has(target.id);
+  if (!already) {
+    await new Promise((resolve, reject) => chrome.debugger.attach(id, '1.3', () => (chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve())));
+    attachedTargets.add(target.id);
+  }
+  try { return await fn(id); }
+  finally {
+    setTimeout(() => { attachedTargets.delete(target.id); chrome.debugger.detach(id, () => void chrome.runtime.lastError); }, 2500);
+  }
+}
+const attachedTargets = new Set();
+
+const evalIn = (id, expression) => send(id, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).then((r) => r?.result?.value);
+
+// Click "Slide N" in the presenter view's slide list. Works with the list open or closed:
+// tries the item directly, and if none is found opens the current-slide control first.
+const PRESENTER_JUMP_JS = (n) => `(() => {
+  const label = new RegExp('^\\s*Slide ' + ${n} + '(\\b|:)');
+  const items = () => Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], li, div, span')).filter((e) => e.children.length <= 3 && label.test(e.textContent || ''));
+  const click = (e) => { for (const t of ['mousedown', 'mouseup', 'click']) e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); };
+  let found = items();
+  if (!found.length) {
+    const opener = Array.from(document.querySelectorAll('[role="button"], button, [role="combobox"], [aria-haspopup]')).find((e) => /^\\s*Slide \\d+/.test(e.textContent || ''));
+    if (opener) click(opener);
+    found = items();
+  }
+  if (!found.length) return 'no "Slide ${n}" item in the presenter view';
+  click(found[found.length - 1]);
+  return true;
+})()`;
+
+// Summary of the presenter view's controls, for diagnostics.
+const PRESENTER_DUMP_JS = `(() => {
+  const els = Array.from(document.querySelectorAll('button, [role], [aria-label], select, input, a'));
+  const rows = els.slice(0, 250).map((e) => [e.tagName.toLowerCase(), e.getAttribute('role') || '', e.getAttribute('aria-label') || '', (e.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60), e.className && typeof e.className === 'string' ? e.className.slice(0, 60) : ''].join(' | '));
+  return 'title: ' + document.title + '\\nurl: ' + location.href + '\\nelements: ' + els.length + '\\n' + rows.join('\\n');
+})()`;
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'presenterJump') {
+    (async () => {
+      const target = await findPresenterTarget();
+      if (!target) return sendResponse({ ok: false, reason: 'none' });
+      const result = await withTarget(target, (id) => evalIn(id, PRESENTER_JUMP_JS(Number(msg.number))));
+      sendResponse(result === true ? { ok: true } : { ok: false, reason: String(result) });
+    })().catch((err) => sendResponse({ ok: false, reason: err.message }));
+    return true;
+  }
+  if (msg?.type === 'presenterDump') {
+    (async () => {
+      const target = await findPresenterTarget();
+      if (!target) return sendResponse({ ok: false, text: 'No presenter-view window found (open Presenter view in Google Slides first).' });
+      const text = await withTarget(target, (id) => evalIn(id, PRESENTER_DUMP_JS));
+      sendResponse({ ok: true, text: String(text) });
+    })().catch((err) => sendResponse({ ok: false, text: err.message }));
+    return true;
+  }
+});

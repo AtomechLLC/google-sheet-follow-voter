@@ -95,6 +95,7 @@ for (const [col, type] of [['lang', 'TEXT'], ['text_source', 'TEXT'], ['reply', 
 }
 const slideCols = new Set(db.prepare('PRAGMA table_info(slides)').all().map((c) => c.name));
 if (!slideCols.has('notes')) db.exec('ALTER TABLE slides ADD COLUMN notes TEXT');
+if (!slideCols.has('number')) db.exec('ALTER TABLE slides ADD COLUMN number INTEGER');
 
 const now = () => Date.now();
 const newKey = () => crypto.randomBytes(12).toString('base64url');
@@ -143,10 +144,10 @@ const stmt = {
 
   deleteSlides: db.prepare('DELETE FROM slides WHERE session_code = ?'),
   upsertSlide: db.prepare(
-    'INSERT INTO slides (session_code, idx, object_id, title, image, notes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_code, idx) DO UPDATE SET object_id = excluded.object_id, title = excluded.title, image = excluded.image, notes = excluded.notes'
+    'INSERT INTO slides (session_code, idx, object_id, title, image, notes, number) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_code, idx) DO UPDATE SET object_id = excluded.object_id, title = excluded.title, image = excluded.image, notes = excluded.notes, number = excluded.number'
   ),
-  listSlides: db.prepare('SELECT idx, object_id, title, image, notes FROM slides WHERE session_code = ? ORDER BY idx'),
-  getSlide: db.prepare('SELECT idx, object_id, title, image, notes FROM slides WHERE session_code = ? AND idx = ?'),
+  listSlides: db.prepare('SELECT idx, object_id, title, image, notes, number FROM slides WHERE session_code = ? ORDER BY idx'),
+  getSlide: db.prepare('SELECT idx, object_id, title, image, notes, number FROM slides WHERE session_code = ? AND idx = ?'),
   getTranslation: db.prepare('SELECT text, source_hash FROM translations WHERE session_code = ? AND slide_idx = ? AND lang = ?'),
   putTranslation: db.prepare(
     'INSERT INTO translations (session_code, slide_idx, lang, source_hash, text, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_code, slide_idx, lang) DO UPDATE SET source_hash = excluded.source_hash, text = excluded.text, created_at = excluded.created_at'
@@ -243,10 +244,10 @@ export const Sessions = {
   remove: (code) => stmt.deleteSession.run(code),
   replaceSlides: db.transaction((code, slides) => {
     stmt.deleteSlides.run(code);
-    for (const s of slides) stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null);
+    for (const s of slides) stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null, s.number ?? s.idx + 1);
   }),
   upsertSlide(code, s) {
-    stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null);
+    stmt.upsertSlide.run(code, s.idx, s.objectId || null, s.title || null, s.image || null, s.notes || null, s.number ?? s.idx + 1);
   },
   slides: (code) => stmt.listSlides.all(code),
   slide: (code, idx) => stmt.getSlide.get(code, idx),

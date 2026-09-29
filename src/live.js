@@ -19,6 +19,7 @@ export function publicState(code) {
     slides: Sessions.slides(code).map((sl) => ({
       idx: sl.idx,
       objectId: sl.object_id,
+      number: sl.number || sl.idx + 1, // Google's own slide number (counts skipped slides)
       title: sl.title,
       image: sl.image ? `/slides/${code}/${sl.image}` : null,
       notes: sl.notes || null,
