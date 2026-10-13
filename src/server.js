@@ -12,6 +12,7 @@ import {
   exchangeCode,
   parsePresentationId,
   importPresentation,
+  isImporting,
   createDemoSlides,
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults, liveSessions } from './live.js';
@@ -286,11 +287,13 @@ app.post('/api/sessions/:code/reimport', loadSession, requireTeacher, requireOwn
   if (!s.presentation_id) return res.status(400).json({ error: 'Demo sessions cannot be re-imported' });
   const teacher = Teachers.get(s.teacher_id);
   if (!teacher) return res.status(400).json({ error: 'The Google account that created this session is signed out.' });
-  if (s.status === 'importing') return res.json({ ok: true });
-  Sessions.setStatus(s.code, { status: 'importing', message: 'Re-importing…' });
+  if (isImporting(s.code)) return res.json({ ok: true });
+  // Still marked "importing" with no import running: a restart cut it off, so pick up where it stopped.
+  const resume = s.status === 'importing';
+  Sessions.setStatus(s.code, { status: 'importing', message: resume ? 'Resuming the import…' : 'Re-importing…' });
   broadcastSession(s.code);
   res.json({ ok: true });
-  importPresentation({ teacher, session: s, onProgress: () => broadcastSession(s.code) });
+  importPresentation({ teacher, session: s, resume, onProgress: () => broadcastSession(s.code) });
 });
 
 app.post('/api/sessions/:code/questions/:id', loadSession, requireTeacher, (req, res) => {
@@ -492,4 +495,19 @@ server.listen(config.port, () => {
   if (!googleConfigured) console.warn('[google] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set: Google Slides import is disabled.');
   if (config.demoMode) console.log('[demo] DEMO_MODE is on: /api/demo creates placeholder sessions.');
   console.log(translationProvider ? `[translate] provider: ${translationProvider.name}` : '[translate] no provider configured; speaker notes are shown untranslated.');
+  resumeInterruptedImports();
 });
+
+/** Imports run inside this process, so a restart (deploy, crash) leaves them stuck on "importing": resume them. */
+function resumeInterruptedImports() {
+  if (!googleConfigured) return;
+  for (const s of Sessions.listImporting()) {
+    const teacher = s.teacher_id ? Teachers.get(s.teacher_id) : null;
+    if (!teacher) {
+      Sessions.setStatus(s.code, { status: 'error', message: 'The import was interrupted. Sign in and click Re-import slides.' });
+      continue;
+    }
+    console.log(`[import ${s.code}] resuming an import interrupted by a restart`);
+    importPresentation({ teacher, session: s, resume: true, onProgress: () => broadcastSession(s.code) });
+  }
+}

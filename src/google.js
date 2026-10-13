@@ -73,8 +73,57 @@ export function parsePresentationId(input) {
   return null;
 }
 
-async function slidesGet(token, url) {
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Sliding-window limiter: `await take(key)` resolves once fewer than `limit` calls for that key
+ * happened in the last `windowMs`.
+ */
+export function createRateLimiter(limit, windowMs) {
+  const calls = new Map(); // key -> timestamps of recent calls, oldest first
+  return async function take(key) {
+    if (!calls.has(key)) calls.set(key, []);
+    const recent = calls.get(key);
+    for (;;) {
+      const now = Date.now();
+      while (recent.length && now - recent[0] >= windowMs) recent.shift();
+      if (recent.length < limit) { recent.push(now); return; }
+      await sleep(windowMs - (now - recent[0]) + 20);
+    }
+  };
+}
+
+// Google allows 60 thumbnail requests per minute per user (300 per project), and answers 429 past
+// that. A 258-slide deck fetched 68 thumbnails in 43 s and its import stopped there, so each
+// teacher's thumbnail calls are paced just under the limit: small decks still import at once,
+// big ones at about a slide a second.
+const takeThumbnailSlot = createRateLimiter(55, 60_000);
+
+/**
+ * fetch with a 30 s timeout that retries rate limits (429), server errors and network failures
+ * with exponential backoff (honouring Retry-After), as Google's usage-limit docs recommend.
+ */
+export async function fetchRetry(url, options = {}, { tries = 8, label = 'request', minRateLimitWait = 15_000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    let res = null, err = null;
+    try { res = await fetch(url, { ...options, signal: AbortSignal.timeout(30_000) }); }
+    catch (e) { err = e; }
+    const retryable = err || res.status === 429 || res.status >= 500;
+    if (!retryable || attempt >= tries - 1) {
+      if (err) throw err;
+      return res;
+    }
+    await res?.body?.cancel().catch(() => {});
+    const after = Number(res?.headers.get('retry-after'));
+    const backoff = Math.min(2 ** attempt * 1000, 64_000) + Math.random() * 1000;
+    const wait = after > 0 ? after * 1000 : res?.status === 429 ? Math.max(backoff, minRateLimitWait) : backoff;
+    console.warn(`[google] ${label}: ${err ? err.message : `HTTP ${res.status}`}; retry ${attempt + 1} in ${Math.round(wait / 1000)} s`);
+    await sleep(wait);
+  }
+}
+
+async function slidesGet(token, url, label = 'Slides API') {
+  const res = await fetchRetry(url, { headers: { authorization: `Bearer ${token}` } }, { label });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = body.error?.message || `HTTP ${res.status}`;
@@ -110,17 +159,31 @@ function slideTitle(slide) {
 }
 
 async function downloadTo(url, file) {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`Thumbnail download failed: HTTP ${res.status}`);
-  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(file));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetchRetry(url, {}, { label: 'thumbnail download', tries: 4 });
+      if (!res.ok || !res.body) throw new Error(`Thumbnail download failed: HTTP ${res.status}`);
+      await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(file));
+      return;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      await sleep(1000 * attempt);
+    }
+  }
 }
+
+/** Imports running in this process. A session left "importing" without one was cut off by a restart. */
+const activeImports = new Set();
+export const isImporting = (code) => activeImports.has(code);
 
 /**
  * Fetches the deck's slide list and thumbnails into data/slides/<code>/.
  * Updates the session row as it goes; `onProgress` is called after every change.
  */
-export async function importPresentation({ teacher, session, onProgress = () => {} }) {
+export async function importPresentation({ teacher, session, onProgress = () => {}, resume = false }) {
   const code = session.code;
+  if (activeImports.has(code)) return;
+  activeImports.add(code);
   const dir = path.join(slidesDir, code);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -137,43 +200,46 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     const slides = all.filter((s) => !s.slideProperties?.isSkipped);
     const title = pres.title || session.title;
 
-    Sessions.setStatus(code, {
-      status: 'importing',
-      message: `Fetching slide 1 of ${slides.length}…`,
-      slideCount: slides.length,
-      title,
-    });
-    // Keep old images visible while re-importing; replace metadata now.
-    Sessions.replaceSlides(
-      code,
-      slides.map((s, i) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), number: numberOf.get(s.objectId), image: null }))
+    // Keep old images visible while re-importing (matched by slide id); replace metadata now.
+    const before = new Map(
+      Sessions.slides(code)
+        .filter((s) => s.object_id && s.image && fs.existsSync(path.join(dir, s.image)))
+        .map((s) => [s.object_id, s.image])
     );
+    const row = (s, i, image) => ({ idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), number: numberOf.get(s.objectId), image });
+    Sessions.replaceSlides(code, slides.map((s, i) => row(s, i, before.get(s.objectId) || null)));
+    // A resumed import (cut off by a restart) only fetches the images it does not have yet;
+    // a re-import refreshes them all, since the slides may have been edited.
+    const todo = slides.map((_, i) => i).filter((i) => !resume || !before.has(slides[i].objectId));
+    let done = slides.length - todo.length;
+    const progress = () => {
+      const paced = todo.length > 55 ? ' (Google allows about 60 slide images a minute)' : '';
+      return `Fetching slide images: ${done} of ${slides.length}${paced}…`;
+    };
+    Sessions.setStatus(code, { status: 'importing', message: progress(), slideCount: slides.length, title });
     onProgress();
 
-    // Modest concurrency: the Slides API rate-limits per user.
+    // Modest concurrency; takeThumbnailSlot keeps the request rate under Google's per-user limit.
     const CONCURRENCY = 3;
     let next = 0;
-    let done = 0;
     const worker = async () => {
-      while (next < slides.length) {
-        const i = next++;
+      while (next < todo.length) {
+        const i = todo[next++];
         const s = slides[i];
         const url =
           `${SLIDES_API}/${session.presentation_id}/pages/${encodeURIComponent(s.objectId)}/thumbnail` +
           `?thumbnailProperties.thumbnailSize=${config.thumbnailSize}&thumbnailProperties.mimeType=PNG`;
-        const thumb = await slidesGet(await accessTokenFor(teacher), url);
+        await takeThumbnailSlot(teacher.id);
+        const thumb = await slidesGet(await accessTokenFor(teacher), url, `thumbnail for slide ${i + 1}`);
         const file = `${i}-${Date.now().toString(36)}.png`;
         await downloadTo(thumb.contentUrl, path.join(dir, file));
-        Sessions.upsertSlide(code, { idx: i, objectId: s.objectId, title: slideTitle(s), notes: slideNotes(s), number: numberOf.get(s.objectId), image: file });
+        Sessions.upsertSlide(code, row(s, i, file));
         done++;
-        Sessions.setStatus(code, {
-          status: 'importing',
-          message: `Fetching slide ${Math.min(done + 1, slides.length)} of ${slides.length}…`,
-        });
+        Sessions.setStatus(code, { status: 'importing', message: progress() });
         onProgress();
       }
     };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, slides.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker));
 
     // Remove stale image files from previous imports.
     const keep = new Set(Sessions.slides(code).map((s) => s.image));
@@ -183,8 +249,10 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     onProgress();
   } catch (err) {
     console.error(`[import ${code}]`, err);
-    Sessions.setStatus(code, { status: 'error', message: err.message });
+    Sessions.setStatus(code, { status: 'error', message: `${err.message} Click Re-import slides to try again.` });
     onProgress();
+  } finally {
+    activeImports.delete(code);
   }
 }
 

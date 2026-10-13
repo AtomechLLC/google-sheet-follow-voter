@@ -137,6 +137,7 @@ const stmt = {
   deleteTeacher: db.prepare('DELETE FROM teachers WHERE id = ?'),
 
   getSession: db.prepare('SELECT * FROM sessions WHERE code = ?'),
+  listImporting: db.prepare("SELECT * FROM sessions WHERE status = 'importing' AND presentation_id IS NOT NULL"),
   listSessionsForTeacher: db.prepare(
     `SELECT s.*, COALESCE(m.role, 'owner') AS role FROM sessions s
      LEFT JOIN session_members m ON m.session_code = s.code AND m.teacher_id = ?
@@ -228,6 +229,8 @@ export const Teachers = {
 export const Sessions = {
   get: (code) => stmt.getSession.get(code),
   listForTeacher: (teacherId) => stmt.listSessionsForTeacher.all(teacherId, teacherId),
+  /** Google decks whose import has not finished (after a restart: cut off mid-import). */
+  listImporting: () => stmt.listImporting.all(),
   create({ teacherId, title, presentationId, status = 'importing' }) {
     let code;
     do code = randomCode(6);
