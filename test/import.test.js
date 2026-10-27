@@ -123,3 +123,17 @@ test('signing in again reuses the teacher (by email, or by this browser) so earl
   const other = Teachers.signIn({ email: 'someone@example.com', accessToken: 'z', refreshToken: 'r4', expiresAt: 4 }, relinked);
   assert.notEqual(other.id, relinked.id);
 });
+
+test('a sign-in without Slides access fails the import with the tick-the-box message and is forgotten', async () => {
+  const { SCOPE_MESSAGE, grantsSlides } = await import('../src/google.js');
+  assert.equal(grantsSlides('openid https://www.googleapis.com/auth/userinfo.email'), false);
+  assert.equal(grantsSlides('openid https://www.googleapis.com/auth/presentations.readonly email'), true);
+  globalThis.fetch = async () => Response.json({ error: { code: 403, message: 'Request had insufficient authentication scopes.' } }, { status: 403 });
+  const teacher = Teachers.create({ email: 'unticked@example.com', accessToken: 'tok', refreshToken: 'r', expiresAt: Date.now() + 3600_000 });
+  const s = Sessions.create({ teacherId: teacher.id, title: 'Importing…', presentationId: 'deck4' });
+  await importPresentation({ teacher, session: s });
+  const row = Sessions.get(s.code);
+  assert.equal(row.status, 'error');
+  assert.equal(row.status_message, SCOPE_MESSAGE);
+  assert.equal(Teachers.get(teacher.id).refresh_token, null, 'the home page then offers Reconnect Google');
+});

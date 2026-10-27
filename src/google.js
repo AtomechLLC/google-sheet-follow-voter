@@ -8,9 +8,23 @@ import { Teachers, Sessions, slidesDir } from './db.js';
 // openid + email identify the account, so signing in again reuses the same teacher (and decks).
 const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/presentations.readonly'];
 
+const SLIDES_SCOPE = 'https://www.googleapis.com/auth/presentations.readonly';
+
 /** Shown when Google no longer accepts the saved sign-in (expired or revoked refresh token). */
 export const REAUTH_MESSAGE =
   'Your Google sign-in has expired. Open the Slide Pulse home page, click "Reconnect Google", then click Re-import slides.';
+
+/**
+ * Shown when the sign-in did not include Slides access. With several scopes Google shows one
+ * tick-box per permission and the Slides one can be left unticked (seen live: the import then
+ * failed with "Request had insufficient authentication scopes").
+ */
+export const SCOPE_MESSAGE =
+  'Google did not give Slide Pulse access to your slides. Open the Slide Pulse home page, click "Reconnect Google", ' +
+  'tick "See all your Google Slides presentations" on Google\'s screen, then click Re-import slides.';
+
+/** True when a token response's granted scopes include Slides read access. */
+export const grantsSlides = (scope) => String(scope || '').split(/\s+/).includes(SLIDES_SCOPE);
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SLIDES_API = 'https://slides.googleapis.com/v1/presentations';
@@ -60,6 +74,7 @@ export async function exchangeCode(code) {
   const t = await tokenRequest({ code, grant_type: 'authorization_code', redirect_uri: redirectUri() });
   return {
     email: emailFromIdToken(t.id_token),
+    scope: t.scope,
     accessToken: t.access_token,
     refreshToken: t.refresh_token,
     expiresAt: Date.now() + (t.expires_in || 3600) * 1000,
@@ -162,6 +177,12 @@ async function slidesGet(token, url, label = 'Slides API') {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = body.error?.message || `HTTP ${res.status}`;
+    if (res.status === 403 && /insufficient authentication scopes/i.test(msg)) {
+      const err = new Error(SCOPE_MESSAGE);
+      err.reauth = true;
+      err.status = 403;
+      throw err;
+    }
     const err = new Error(`Google Slides API: ${msg}`);
     err.status = res.status;
     throw err;
@@ -284,6 +305,8 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     onProgress();
   } catch (err) {
     console.error(`[import ${code}]`, err);
+    // A sign-in without Slides access is useless: forget it so the home page offers "Reconnect Google".
+    if (err.reauth && err.status === 403) Teachers.clearTokens(teacher.id);
     Sessions.setStatus(code, { status: 'error', message: err.reauth ? err.message : `${err.message} Click Re-import slides to try again.` });
     onProgress();
   } finally {

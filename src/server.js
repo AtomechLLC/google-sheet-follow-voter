@@ -15,6 +15,8 @@ import {
   isImporting,
   createDemoSlides,
   REAUTH_MESSAGE,
+  SCOPE_MESSAGE,
+  grantsSlides,
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults, liveSessions } from './live.js';
 import { zipDirectory } from './zip.js';
@@ -89,6 +91,11 @@ app.get('/auth/google/callback', async (req, res) => {
     const tokens = await exchangeCode(String(code));
     const teacher = Teachers.signIn(tokens, currentTeacher(req));
     setSignedCookie(res, 'tid', teacher.id, 60 * 60 * 24 * 180);
+    if (!grantsSlides(tokens.scope)) {
+      // Google lets people untick the Slides permission; without it no deck can be imported.
+      Teachers.clearTokens(teacher.id);
+      return res.redirect(`/?error=${encodeURIComponent(SCOPE_MESSAGE)}`);
+    }
     res.redirect('/');
   } catch (err) {
     console.error('[oauth]', err);
