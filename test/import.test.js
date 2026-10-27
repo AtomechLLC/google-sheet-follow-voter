@@ -86,3 +86,40 @@ test('import survives a 429, numbers skipped slides, and a resume fetches only m
   assert.ok(Sessions.slides(s.code).every((x) => x.image));
   assert.deepEqual(Sessions.listImporting().map((x) => x.code), []);
 });
+
+test('an expired Google sign-in (invalid_grant) fails the import with "Reconnect Google" and drops the dead tokens', async () => {
+  const { REAUTH_MESSAGE } = await import('../src/google.js');
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith('https://oauth2.googleapis.com/token')) {
+      return Response.json({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }, { status: 400 });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+  const teacher = Teachers.create({ email: 'old@example.com', accessToken: 'stale', refreshToken: 'dead', expiresAt: Date.now() - 1000 });
+  const s = Sessions.create({ teacherId: teacher.id, title: 'Importing…', presentationId: 'deck2' });
+  await importPresentation({ teacher, session: s });
+  const row = Sessions.get(s.code);
+  assert.equal(row.status, 'error');
+  assert.equal(row.status_message, REAUTH_MESSAGE);
+  assert.equal(Teachers.get(teacher.id).refresh_token, null);
+});
+
+test('signing in again reuses the teacher (by email, or by this browser) so earlier decks stay theirs', () => {
+  const a = Teachers.signIn({ email: 'Prof@Example.com', accessToken: 'a1', refreshToken: 'r1', expiresAt: 1 });
+  const s = Sessions.create({ teacherId: a.id, title: 'Deck', presentationId: 'deck3' });
+  Teachers.clearTokens(a.id);
+  const again = Teachers.signIn({ email: 'prof@example.com', accessToken: 'a2', refreshToken: 'r2', expiresAt: 2 });
+  assert.equal(again.id, a.id);
+  assert.equal(again.refresh_token, 'r2');
+  assert.deepEqual(Sessions.listForTeacher(again.id).map((x) => x.code), [s.code]);
+
+  // A teacher made before emails were stored, still signed in through its cookie, is updated in place.
+  const legacy = Teachers.create({ accessToken: 'x', refreshToken: null, expiresAt: 0 });
+  const relinked = Teachers.signIn({ email: 'legacy@example.com', accessToken: 'y', refreshToken: 'r3', expiresAt: 3 }, legacy);
+  assert.equal(relinked.id, legacy.id);
+  assert.equal(relinked.email, 'legacy@example.com');
+
+  // A different Google account in that browser gets its own teacher.
+  const other = Teachers.signIn({ email: 'someone@example.com', accessToken: 'z', refreshToken: 'r4', expiresAt: 4 }, relinked);
+  assert.notEqual(other.id, relinked.id);
+});

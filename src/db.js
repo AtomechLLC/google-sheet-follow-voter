@@ -134,6 +134,9 @@ const stmt = {
   updateTokens: db.prepare(
     'UPDATE teachers SET access_token = ?, refresh_token = COALESCE(?, refresh_token), token_expires = ? WHERE id = ?'
   ),
+  clearTokens: db.prepare('UPDATE teachers SET access_token = NULL, refresh_token = NULL, token_expires = 0 WHERE id = ?'),
+  setTeacherEmail: db.prepare('UPDATE teachers SET email = ? WHERE id = ?'),
+  getTeacherByEmail: db.prepare('SELECT * FROM teachers WHERE lower(email) = lower(?) ORDER BY created_at LIMIT 1'),
   deleteTeacher: db.prepare('DELETE FROM teachers WHERE id = ?'),
 
   getSession: db.prepare('SELECT * FROM sessions WHERE code = ?'),
@@ -154,6 +157,7 @@ const stmt = {
   updateSessionStatus: db.prepare('UPDATE sessions SET status = ?, status_message = ?, slide_count = ?, title = ? WHERE code = ?'),
   setCurrentSlide: db.prepare('UPDATE sessions SET current_slide = ?, changed_by = ?, changed_at = ? WHERE code = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE code = ?'),
+  setSessionTeacher: db.prepare('UPDATE sessions SET teacher_id = ? WHERE code = ?'),
 
   deleteSlides: db.prepare('DELETE FROM slides WHERE session_code = ?'),
   upsertSlide: db.prepare(
@@ -223,6 +227,22 @@ export const Teachers = {
   updateTokens(id, { accessToken, refreshToken, expiresAt }) {
     stmt.updateTokens.run(accessToken, refreshToken || null, expiresAt, id);
   },
+  /** Forget Google tokens (revoked/expired sign-in, or signed out) but keep the teacher and their decks. */
+  clearTokens: (id) => stmt.clearTokens.run(id),
+  byEmail: (email) => (email ? stmt.getTeacherByEmail.get(email) : null),
+  setEmail: (id, email) => { if (email) stmt.setTeacherEmail.run(email, id); },
+  /**
+   * After Google sign-in: reuse the teacher this Google account (by email) or this browser
+   * (`current`, from the cookie) already is, so a re-sign-in keeps ownership of earlier decks.
+   * Each sign-in used to create a new teacher, orphaning everything imported before.
+   */
+  signIn({ email, accessToken, refreshToken, expiresAt }, current = null) {
+    const existing = Teachers.byEmail(email) || (current && (!current.email || !email || current.email.toLowerCase() === email.toLowerCase()) ? current : null);
+    if (!existing) return Teachers.create({ email, accessToken, refreshToken, expiresAt });
+    Teachers.updateTokens(existing.id, { accessToken, refreshToken, expiresAt });
+    Teachers.setEmail(existing.id, email);
+    return Teachers.get(existing.id);
+  },
   remove: (id) => stmt.deleteTeacher.run(id),
 };
 
@@ -269,6 +289,11 @@ export const Sessions = {
     return stmt.getMember.get(session.code, teacherId)?.role || null;
   },
   addMember: (code, teacherId, role) => stmt.upsertMember.run(code, teacherId, role),
+  /** Make `teacherId` the deck's owner (its Google sign-in is then used for imports). */
+  setOwner(code, teacherId) {
+    stmt.setSessionTeacher.run(teacherId, code);
+    stmt.upsertMember.run(code, teacherId, 'owner');
+  },
   remove: (code) => stmt.deleteSession.run(code),
   replaceSlides: db.transaction((code, slides) => {
     stmt.deleteSlides.run(code);

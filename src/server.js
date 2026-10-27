@@ -14,6 +14,7 @@ import {
   importPresentation,
   isImporting,
   createDemoSlides,
+  REAUTH_MESSAGE,
 } from './google.js';
 import { attachWebSocket, publicState, resultsState, broadcastSession, broadcastResults, liveSessions } from './live.js';
 import { zipDirectory } from './zip.js';
@@ -86,7 +87,7 @@ app.get('/auth/google/callback', async (req, res) => {
   if (!code || !state || state !== expected) return res.redirect('/?error=state_mismatch');
   try {
     const tokens = await exchangeCode(String(code));
-    const teacher = Teachers.create(tokens);
+    const teacher = Teachers.signIn(tokens, currentTeacher(req));
     setSignedCookie(res, 'tid', teacher.id, 60 * 60 * 24 * 180);
     res.redirect('/');
   } catch (err) {
@@ -96,8 +97,8 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 app.post('/auth/logout', (req, res) => {
-  const t = currentTeacher(req);
-  if (t) Teachers.remove(t.id);
+  // Only this browser signs out. The teacher (and their decks) stays, so signing in again with the
+  // same Google account picks them back up; deleting it here used to orphan every deck.
   clearCookie(res, 'tid');
   res.json({ ok: true });
 });
@@ -202,6 +203,8 @@ app.get('/api/me', (req, res) => {
   const t = currentTeacher(req);
   res.json({
     signedIn: Boolean(t),
+    // false once Google stopped accepting the saved sign-in: the home page offers "Reconnect Google".
+    googleConnected: Boolean(t?.refresh_token),
     googleConfigured,
     demoMode: config.demoMode,
     baseUrl: config.baseUrl,
@@ -234,6 +237,7 @@ app.get('/api/live', (req, res) => {
 app.post('/api/sessions', async (req, res) => {
   const teacher = currentTeacher(req);
   if (!teacher) return res.status(401).json({ error: 'Sign in with Google first' });
+  if (!teacher.refresh_token) return res.status(401).json({ error: REAUTH_MESSAGE, reauth: true });
   const presentationId = parsePresentationId(req.body?.url);
   if (!presentationId) return res.status(400).json({ error: 'That does not look like a Google Slides link.' });
   const session = Sessions.create({ teacherId: teacher.id, title: 'Importing…', presentationId });
@@ -285,8 +289,16 @@ app.post('/api/sessions/:code/slide', loadSession, requireTeacher, (req, res) =>
 app.post('/api/sessions/:code/reimport', loadSession, requireTeacher, requireOwner, (req, res) => {
   const s = req.session;
   if (!s.presentation_id) return res.status(400).json({ error: 'Demo sessions cannot be re-imported' });
-  const teacher = Teachers.get(s.teacher_id);
-  if (!teacher) return res.status(400).json({ error: 'The Google account that created this session is signed out.' });
+  let teacher = s.teacher_id ? Teachers.get(s.teacher_id) : null;
+  // The owner is re-importing from a browser signed in to Google: if the deck's original sign-in
+  // is gone or dead (older versions made a new teacher on every sign-in), adopt the deck.
+  const me = currentTeacher(req);
+  if ((!teacher || !teacher.refresh_token) && me?.refresh_token) {
+    Sessions.setOwner(s.code, me.id);
+    teacher = me;
+  }
+  if (!teacher) return res.status(400).json({ error: 'The Google account that created this session is signed out. Sign in with Google on the home page, then click Re-import slides.' });
+  if (!teacher.refresh_token) return res.status(400).json({ error: REAUTH_MESSAGE, reauth: true });
   if (isImporting(s.code)) return res.json({ ok: true });
   // Still marked "importing" with no import running: a restart cut it off, so pick up where it stopped.
   const resume = s.status === 'importing';
@@ -503,8 +515,8 @@ function resumeInterruptedImports() {
   if (!googleConfigured) return;
   for (const s of Sessions.listImporting()) {
     const teacher = s.teacher_id ? Teachers.get(s.teacher_id) : null;
-    if (!teacher) {
-      Sessions.setStatus(s.code, { status: 'error', message: 'The import was interrupted. Sign in and click Re-import slides.' });
+    if (!teacher || !teacher.refresh_token) {
+      Sessions.setStatus(s.code, { status: 'error', message: teacher ? REAUTH_MESSAGE : 'The import was interrupted. Sign in and click Re-import slides.' });
       continue;
     }
     console.log(`[import ${s.code}] resuming an import interrupted by a restart`);

@@ -61,6 +61,10 @@
       <h2 style="margin:0">New presentation</h2>
       <button id="logout" class="btn-sm">Sign out</button>
     </div>
+    <div id="reconnect" class="row spread" style="display:none">
+      <span class="muted">Google no longer accepts your saved sign-in, so slides cannot be imported. Reconnect to keep your presentations and import again.</span>
+      <a class="btn btn-primary" href="/auth/google">Reconnect Google</a>
+    </div>
     <form id="create" class="stack">
       <label for="url" class="muted">Google Slides link</label>
       <input id="url" type="url" placeholder="https://docs.google.com/presentation/d/…/edit" required autocomplete="off">
@@ -129,6 +133,7 @@ if (!me.signedIn) {
   if (me.demoMode) $('#demo-out').style.display = '';
 } else {
   $('#signed-in').style.display = '';
+  if (me.googleConfigured && !me.googleConnected) $('#reconnect').style.display = '';
   if (me.demoMode) $('#demo-in').style.display = '';
   renderSessions(me.sessions);
 }

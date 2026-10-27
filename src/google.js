@@ -5,7 +5,12 @@ import { Readable } from 'node:stream';
 import { config } from './config.js';
 import { Teachers, Sessions, slidesDir } from './db.js';
 
-const SCOPES = ['https://www.googleapis.com/auth/presentations.readonly'];
+// openid + email identify the account, so signing in again reuses the same teacher (and decks).
+const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/presentations.readonly'];
+
+/** Shown when Google no longer accepts the saved sign-in (expired or revoked refresh token). */
+export const REAUTH_MESSAGE =
+  'Your Google sign-in has expired. Open the Slide Pulse home page, click "Reconnect Google", then click Re-import slides.';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SLIDES_API = 'https://slides.googleapis.com/v1/presentations';
@@ -38,26 +43,56 @@ async function tokenRequest(params) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(`Google token error: ${body.error || res.status} ${body.error_description || ''}`.trim());
+    const err = new Error(`Google token error: ${body.error || res.status} ${body.error_description || ''}`.trim());
+    err.code = body.error;
+    throw err;
   }
   return body;
+}
+
+/** Email from the id_token. It comes straight from Google's token endpoint over TLS, so it is only decoded. */
+function emailFromIdToken(idToken) {
+  try { return JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString('utf8')).email || null; }
+  catch { return null; }
 }
 
 export async function exchangeCode(code) {
   const t = await tokenRequest({ code, grant_type: 'authorization_code', redirect_uri: redirectUri() });
   return {
+    email: emailFromIdToken(t.id_token),
     accessToken: t.access_token,
     refreshToken: t.refresh_token,
     expiresAt: Date.now() + (t.expires_in || 3600) * 1000,
   };
 }
 
-/** Returns a valid access token for the teacher, refreshing it when needed. */
+/** Error thrown when the teacher must sign in with Google again. */
+function reauthError() {
+  const err = new Error(REAUTH_MESSAGE);
+  err.reauth = true;
+  return err;
+}
+
+/**
+ * Returns a valid access token for the teacher, refreshing it when needed. Seen live: Google
+ * answered a refresh with `invalid_grant` ("Token has been expired or revoked"; OAuth apps left
+ * in Testing status get 7-day refresh tokens), and every import then failed. The dead tokens
+ * are dropped so the home page can offer "Reconnect Google".
+ */
 export async function accessTokenFor(teacher) {
   const fresh = teacher.access_token && teacher.token_expires && teacher.token_expires - Date.now() > 60_000;
   if (fresh) return teacher.access_token;
-  if (!teacher.refresh_token) throw new Error('Google sign-in expired. Please sign in again.');
-  const t = await tokenRequest({ refresh_token: teacher.refresh_token, grant_type: 'refresh_token' });
+  if (!teacher.refresh_token) throw reauthError();
+  let t;
+  try {
+    t = await tokenRequest({ refresh_token: teacher.refresh_token, grant_type: 'refresh_token' });
+  } catch (err) {
+    if (err.code !== 'invalid_grant') throw err;
+    Teachers.clearTokens(teacher.id);
+    teacher.access_token = null;
+    teacher.refresh_token = null;
+    throw reauthError();
+  }
   const expiresAt = Date.now() + (t.expires_in || 3600) * 1000;
   Teachers.updateTokens(teacher.id, { accessToken: t.access_token, refreshToken: t.refresh_token, expiresAt });
   teacher.access_token = t.access_token;
@@ -249,7 +284,7 @@ export async function importPresentation({ teacher, session, onProgress = () => 
     onProgress();
   } catch (err) {
     console.error(`[import ${code}]`, err);
-    Sessions.setStatus(code, { status: 'error', message: `${err.message} Click Re-import slides to try again.` });
+    Sessions.setStatus(code, { status: 'error', message: err.reauth ? err.message : `${err.message} Click Re-import slides to try again.` });
     onProgress();
   } finally {
     activeImports.delete(code);

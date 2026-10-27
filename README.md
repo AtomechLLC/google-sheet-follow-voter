@@ -43,13 +43,19 @@ DEMO_MODE=1 npm start     # then click "Try a demo deck"
 ## Google setup (one time, ~5 minutes)
 
 The deck is private, so the app reads it through the Google Slides API on your behalf.
-It asks only for the `presentations.readonly` scope.
+It asks for the `presentations.readonly` scope, plus `openid` and `email` so that signing in again
+reuses your account and keeps your presentations.
 
 1. Go to <https://console.cloud.google.com/> and create a project (any name).
 2. **APIs & Services → Library**: enable **Google Slides API**.
 3. **APIs & Services → OAuth consent screen**: choose *External*, fill in the app name and your email.
-   Under *Scopes* add `.../auth/presentations.readonly`. Under *Test users* add your Google account.
-   (While the app is in "Testing" status only listed test users can sign in, which is fine for personal use.)
+   Under *Scopes* add `.../auth/presentations.readonly` (`openid` and `email` need no setup).
+   Under *Test users* add your Google account.
+   **Then publish the app** (*Audience* / *Publishing status* → **Publish app**, "In production").
+   While it stays in "Testing", Google expires every sign-in after 7 days: imports then fail with
+   `invalid_grant Token has been expired or revoked` and the home page asks you to **Reconnect
+   Google**. A published app that is not verified works for up to 100 users; Google shows them an
+   "unverified app" warning screen once, which you can click through (*Advanced → Go to …*).
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**, type *Web application*.
    Add this **Authorized redirect URI** (must match `BASE_URL` exactly):
 
