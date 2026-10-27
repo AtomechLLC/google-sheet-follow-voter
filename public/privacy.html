@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .policy h2 { margin-top: 1.4em; font-size: 1.15rem; }
+  .policy li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="container narrow stack policy">
+  <p><a href="/">← Slide Pulse</a></p>
+  <h1>Privacy policy</h1>
+  <p class="muted">Slide Pulse shows a presentation's slides on students' phones and collects anonymous
+    feedback on each slide. This page explains what this site stores and why.</p>
+
+  <h2>Instructors who sign in with Google</h2>
+  <ul>
+    <li>Signing in asks Google for your <b>email address</b> (so signing in again finds your
+      presentations) and <b>read-only access to Google Slides</b>. Slide Pulse cannot edit, create
+      or delete anything in your Google account.</li>
+    <li>It reads only the presentations whose links you paste: the slide list, each slide's text
+      (for slide titles), speaker notes, and slide images, which are stored on this server so
+      students can see the slides without signing in.</li>
+    <li>The access Google grants is stored on this server so slides can be imported again. Signing
+      out discards it. You can also remove Slide Pulse's access at any time at
+      <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">myaccount.google.com/permissions</a>.</li>
+    <li>A cookie keeps you signed in on this browser.</li>
+  </ul>
+
+  <h2>Students</h2>
+  <ul>
+    <li>Students do not sign in. Their phone gets a random ID, kept in the browser, so each person
+      votes once per slide.</li>
+    <li>Stored per presentation: the slide votes ("great", "didn't understand", "question"), the text
+      of any questions typed in, and the instructors' replies. Students should not type personal
+      information into questions.</li>
+  </ul>
+
+  <h2>Instructors and co-instructors</h2>
+  <ul>
+    <li>The name you type on a dashboard or the phone remote is shown to the other instructors and
+      recorded in the presentation's driving log (who changed the slide, and when).</li>
+    <li>The Chrome extension sends the id of the slide you are presenting to this site so phones can
+      follow along. Its pairing link is stored in your browser.</li>
+  </ul>
+
+  <h2>Translation</h2>
+  <p>If this site has a translation service set up (Google Cloud Translation, DeepL, or Anthropic's
+    Claude), speaker notes and question text are sent to it when someone asks for a translation.
+    Translations are stored with the presentation.</p>
+
+  <h2>Use of Google user data</h2>
+  <p>Data from Google is used only to show the presentation and its notes to that presentation's
+    audience and instructors. It is not sold, not used for advertising, and not shared with anyone
+    except the translation service described above. Slide Pulse's use of information received from
+    Google APIs adheres to the
+    <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+    including the Limited Use requirements.</p>
+
+  <h2>Keeping and deleting data</h2>
+  <p>A presentation's slides, notes, votes, questions and logs are kept until its owner deletes it
+    (<b>Delete</b> on the home page), which removes them from this server.</p>
+
+  <h2>Contact</h2>
+  <p id="contact">Questions about this site's data: contact the instructor who runs it.</p>
+</div>
+<script type="module">
+try {
+  const { contactEmail } = await (await fetch('/api/privacy')).json();
+  if (contactEmail) {
+    const el = document.getElementById('contact');
+    el.textContent = 'Questions about this site\'s data: ';
+    const a = document.createElement('a');
+    a.href = `mailto:${contactEmail}`;
+    a.textContent = contactEmail;
+    el.append(a, '.');
+  }
+} catch {}
+</script>
+</body>
+</html>

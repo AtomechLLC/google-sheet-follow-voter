@@ -40,6 +40,8 @@ export const config = {
   demoMode: env.DEMO_MODE === '1' || env.DEMO_MODE === 'true',
   // Thumbnail width requested from the Slides API: SMALL (200px), MEDIUM (800px), LARGE (1600px)
   thumbnailSize: env.THUMBNAIL_SIZE || 'MEDIUM',
+  // Shown on /privacy as the address for privacy questions (Google's consent screen needs a policy page).
+  contactEmail: env.CONTACT_EMAIL || '',
 };
 
 if (!config.sessionSecret) {

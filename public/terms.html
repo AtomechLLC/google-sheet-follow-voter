@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of service · Slide Pulse</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .policy h2 { margin-top: 1.4em; font-size: 1.15rem; }
+  .policy li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="container narrow stack policy">
+  <p><a href="/">← Slide Pulse</a></p>
+  <h1>Terms of service</h1>
+  <p class="muted">Slide Pulse is a classroom tool: instructors show their Google Slides on students'
+    phones and collect anonymous feedback on each slide. By using this site you agree to these terms.</p>
+
+  <h2>Using Slide Pulse</h2>
+  <ul>
+    <li>Instructors may only import presentations they are allowed to share with their audience.
+      Anyone with a presentation's student link or code can see its slides and speaker notes.</li>
+    <li>Keep dashboard, co-instructor and phone-remote links private: anyone holding one can
+      control that presentation.</li>
+    <li>Students and instructors must not post unlawful, abusive or personal information in
+      questions or replies. Instructors may delete presentations and their content at any time.</li>
+  </ul>
+
+  <h2>The service</h2>
+  <ul>
+    <li>Slide Pulse is provided as is, without warranties. It may change, be unavailable, or lose
+      data; keep your original presentations in Google Slides.</li>
+    <li>Access may be removed from anyone who misuses the service.</li>
+  </ul>
+
+  <h2>Privacy</h2>
+  <p>What is stored and why is described in the <a href="/privacy">privacy policy</a>.</p>
+
+  <h2>Contact</h2>
+  <p id="contact">Questions: contact the instructor who runs this site.</p>
+</div>
+<script type="module">
+try {
+  const { contactEmail } = await (await fetch('/api/privacy')).json();
+  if (contactEmail) {
+    const el = document.getElementById('contact');
+    el.textContent = 'Questions: ';
+    const a = document.createElement('a');
+    a.href = `mailto:${contactEmail}`;
+    a.textContent = contactEmail;
+    el.append(a, '.');
+  }
+} catch {}
+</script>
+</body>
+</html>

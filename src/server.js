@@ -104,8 +104,11 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 app.post('/auth/logout', (req, res) => {
-  // Only this browser signs out. The teacher (and their decks) stays, so signing in again with the
-  // same Google account picks them back up; deleting it here used to orphan every deck.
+  // Signing out discards the stored Google access but keeps the teacher (and their decks), so
+  // signing in again with the same Google account picks them back up; deleting it here used to
+  // orphan every deck.
+  const t = currentTeacher(req);
+  if (t) Teachers.clearTokens(t.id);
   clearCookie(res, 'tid');
   res.json({ ok: true });
 });
@@ -113,6 +116,9 @@ app.post('/auth/logout', (req, res) => {
 // ---------- pages ----------
 const page = (file) => (req, res) => res.sendFile(path.join(publicDir, file));
 app.get('/', page('index.html'));
+app.get('/privacy', page('privacy.html'));
+app.get('/terms', page('terms.html'));
+app.get('/api/privacy', (req, res) => res.json({ contactEmail: config.contactEmail || null, baseUrl: config.baseUrl }));
 app.get('/t/:code', page('teacher.html'));
 app.get('/s/:code', page('student.html'));
 app.get('/p/:code', page('present.html'));

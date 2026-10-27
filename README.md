@@ -56,6 +56,10 @@ reuses your account and keeps your presentations.
    `invalid_grant Token has been expired or revoked` and the home page asks you to **Reconnect
    Google**. A published app that is not verified works for up to 100 users; Google shows them an
    "unverified app" warning screen once, which you can click through (*Advanced → Go to …*).
+   Publishing needs, on the *Branding* page: app name, support email, **Application home page**
+   `https://YOUR-DOMAIN/`, **privacy policy** `https://YOUR-DOMAIN/privacy` and (optional)
+   **terms of service** `https://YOUR-DOMAIN/terms`; the site serves both pages. Add your domain
+   under *Authorized domains*. Set `CONTACT_EMAIL` in `.env` to show a contact address on them.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**, type *Web application*.
    Add this **Authorized redirect URI** (must match `BASE_URL` exactly):
 
